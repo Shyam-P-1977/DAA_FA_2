@@ -1,0 +1,1761 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VoltRoute | EV Delivery &amp; Charging Optimizer</title>
+<style>
+/* ── Design Tokens & Dark Theme ────────────────────────────── */
+:root {
+  --bg: #0a1220;
+  --panel: #121e31;
+  --panel2: #17253b;
+  --line: #293c58;
+  --text: #edf4ff;
+  --muted: #98abc5;
+  --teal: #54d6c7;
+  --teal-glow: rgba(84, 214, 199, 0.4);
+  --blue: #83aaff;
+  --amber: #ffc66d;
+  --amber-glow: rgba(255, 198, 109, 0.45);
+  --red: #ff7d8c;
+  --green: #82e4ac;
+  --purple: #c084fc;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: radial-gradient(circle at 80% -5%, #1b3b5a 0, #0a1220 42%);
+  color: var(--text);
+  font: 14px/1.5 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  min-height: 100vh;
+}
+button, input, select { font: inherit; }
+button {
+  cursor: pointer;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  background: var(--teal);
+  color: #062321;
+  font-weight: 800;
+  transition: all 0.2s ease;
+}
+button:hover:not(:disabled) {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+button.secondary {
+  background: #22344e;
+  color: var(--text);
+  border: 1px solid #344965;
+}
+button.secondary:hover:not(:disabled) {
+  background: #2b4060;
+}
+button:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ── Header ─────────────────────────────────────────────────── */
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 4vw;
+  border-bottom: 1px solid var(--line);
+  background: #09111fdc;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  backdrop-filter: blur(14px);
+}
+.brand { display: flex; gap: 12px; align-items: center; }
+.logo {
+  width: 42px; height: 42px; display: grid; place-items: center;
+  background: var(--teal); color: #082321; border-radius: 13px;
+  font-size: 24px; font-weight: 900;
+  box-shadow: 0 0 15px var(--teal-glow);
+}
+.brand h1 { font-size: 18px; margin: 0; font-weight: 800; letter-spacing: -0.2px; }
+.brand p { font-size: 11px; color: var(--muted); margin: 2px 0 0; }
+.pill {
+  border: 1px solid #34556d;
+  color: var(--teal);
+  border-radius: 99px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+/* ── Layout & Hero ───────────────────────────────────────────── */
+main { max-width: 1540px; margin: auto; padding: 25px 4vw 48px; }
+.hero { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; }
+.eyebrow { color: var(--teal); font-size: 11px; font-weight: 800; letter-spacing: 1.6px; text-transform: uppercase; }
+.hero h2 { font-size: clamp(26px, 3vw, 38px); line-height: 1.15; margin: 8px 0; font-weight: 800; }
+.hero p { color: var(--muted); max-width: 780px; margin: 0; font-size: 13px; line-height: 1.5; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ── Metric Cards ────────────────────────────────────────────── */
+.metrics { display: grid; grid-template-columns: repeat(5, 1fr); gap: 11px; margin: 22px 0; }
+.metric, .panel {
+  background: linear-gradient(145deg, #142238, #101a2b);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+.metric { padding: 14px 16px; }
+.metric label { font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+.metric strong { display: block; font-size: 24px; margin-top: 4px; font-weight: 800; color: #fff; }
+.metric small { color: var(--muted); font-size: 10px; }
+
+/* ── Sidebar & Forms ─────────────────────────────────────────── */
+.layout { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 16px; align-items: start; }
+.panel { padding: 16px; margin-bottom: 16px; }
+.panel h3 { font-size: 15px; margin: 0 0 3px; font-weight: 800; }
+.desc { font-size: 12px; color: var(--muted); margin: 0 0 13px; }
+label { display: block; font-size: 11px; color: var(--muted); margin: 10px 0 5px; font-weight: 600; }
+input, select {
+  width: 100%; padding: 9px 10px; border-radius: 9px;
+  border: 1px solid #334864; background: #0b1525; color: var(--text);
+}
+input[type=checkbox] { width: 17px; accent-color: var(--teal); }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.orders { display: grid; gap: 7px; margin-top: 10px; }
+.order {
+  display: grid; grid-template-columns: 1fr auto; gap: 6px; padding: 10px;
+  background: #0c1727; border: 1px solid #2b3d58; border-radius: 10px; align-items: center;
+}
+.order b { font-size: 12px; display: block; }
+.order small { font-size: 10px; color: var(--muted); }
+.mini-actions { display: flex; gap: 7px; margin-top: 10px; }
+
+/* ── Tabs ─────────────────────────────────────────────────────── */
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.tab {
+  padding: 8px 12px; background: #15243a; border: 1px solid #30445f;
+  color: #b8c8df; border-radius: 9px; font-size: 12px; font-weight: 700; cursor: pointer;
+  transition: all 0.15s ease;
+}
+.tab:hover { background: #1c304d; color: #fff; }
+.tab.active { background: #17434a; border-color: var(--teal); color: #c6fff6; box-shadow: 0 0 10px rgba(84, 214, 199, 0.2); }
+
+/* ── Map Container & SVG ─────────────────────────────────────── */
+.mapbox {
+  background: #08121d;
+  border: 1px solid #283c56;
+  border-radius: 14px;
+  overflow: hidden;
+  position: relative;
+}
+.maphead {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 16px; border-bottom: 1px solid #23354c; background: #0b1726;
+}
+.maphead b { font-size: 13px; font-weight: 800; }
+.maphead span { color: var(--muted); font-size: 11px; }
+.map-status-pill {
+  font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 99px;
+  background: #17273d; border: 1px solid #304866; color: var(--teal);
+}
+svg { width: 100%; height: auto; display: block; }
+
+/* Road network styles */
+.road { fill: none; stroke: #263c56; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+.road2 { fill: none; stroke: #1e3047; stroke-width: 2.5; stroke-dasharray: 5 7; }
+.routeCompleted {
+  fill: none; stroke: #2a6b64; stroke-width: 4; stroke-linecap: round;
+  stroke-linejoin: round; opacity: 0; transition: opacity 0.3s ease;
+}
+.routeActive {
+  fill: none; stroke: var(--teal); stroke-width: 6; stroke-linecap: round;
+  stroke-linejoin: round; filter: drop-shadow(0 0 8px #54d6c7cc); opacity: 0;
+}
+
+/* Nodes styling */
+.node { fill: #172a43; stroke: #9ab0d1; stroke-width: 2.5; transition: all 0.3s ease; }
+.node.charger { fill: #3a2e16; stroke: var(--amber); stroke-width: 2.5; }
+.node.hubnode { fill: #182844; stroke: var(--blue); stroke-width: 2.5; }
+.node.visited { fill: #174d47; stroke: var(--teal); stroke-width: 2.5; }
+.node.current {
+  fill: var(--teal); stroke: #eafffc; stroke-width: 3.5;
+  filter: drop-shadow(0 0 10px #54d6c7cc);
+}
+.node.charging-active {
+  fill: #5a4212; stroke: var(--amber); stroke-width: 3.5;
+  filter: drop-shadow(0 0 12px #ffc66dee);
+  animation: pulse-charger 1.2s infinite alternate;
+}
+.node.transit-waypoint {
+  stroke: #7ea9ff;
+  stroke-dasharray: 4 2;
+  filter: none;
+}
+@keyframes pulse-charger {
+  0% { filter: drop-shadow(0 0 5px #ffc66d88); }
+  100% { filter: drop-shadow(0 0 14px #ffc66dff); }
+}
+
+.nlabel { fill: #edf4ff; font-size: 12px; font-weight: 700; }
+.nsub { fill: #9aadc9; font-size: 10px; font-weight: 600; }
+.stop-badge circle { fill: var(--teal); stroke: #062321; stroke-width: 1.5; }
+.stop-badge text { fill: #062321; font-size: 9px; font-weight: 900; text-anchor: middle; }
+.stop-badge.delivery-badge circle { fill: var(--teal); stroke: #062321; stroke-width: 1.5; }
+.stop-badge.delivery-badge text { fill: #062321; font-size: 9px; font-weight: 900; text-anchor: middle; }
+.stop-badge.charger-badge circle { fill: var(--amber); stroke: #2b2315; stroke-width: 1.5; filter: drop-shadow(0 0 5px var(--amber-glow)); }
+.stop-badge.charger-badge text { fill: #2b2315; font-size: 9px; font-weight: 900; text-anchor: middle; }
+
+/* Legend */
+.legend {
+  display: flex; gap: 14px; padding: 10px 14px; border-top: 1px solid #203248;
+  background: #0a1523; color: var(--muted); font-size: 11px; flex-wrap: wrap; align-items: center;
+}
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+.dot-line { display: inline-block; width: 14px; height: 4px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+
+/* ── Animation Control Bar ───────────────────────────────────── */
+.anim-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 11px 15px; background: #0c1828; border-top: 1px solid #23364e;
+}
+.anim-bar button { padding: 7px 13px; font-size: 12px; border-radius: 8px; }
+.speed-group { display: flex; gap: 4px; align-items: center; margin-left: 6px; }
+.speed-label { font-size: 11px; color: var(--muted); white-space: nowrap; font-weight: 600; }
+.spd {
+  padding: 5px 10px; font-size: 11px; border-radius: 7px; cursor: pointer;
+  background: #182d45; border: 1px solid #304860; color: #a0b8d0; font-weight: 700;
+}
+.spd.active { background: #17434a; border-color: var(--teal); color: #c6fff6; }
+.step-prog {
+  font-size: 12px; color: var(--teal); font-weight: 800; white-space: nowrap;
+  margin-left: auto; background: #0f2735; padding: 4px 10px; border-radius: 7px; border: 1px solid #1c4355;
+}
+.anim-status { font-size: 11px; color: var(--muted); white-space: nowrap; font-weight: 600; }
+
+/* ── Live Info Strip ─────────────────────────────────────────── */
+.live-strip {
+  display: grid; grid-template-columns: repeat(6, 1fr); gap: 0;
+  border-top: 1px solid #1c2e47; background: #091321;
+}
+.live-cell { padding: 9px 12px; border-right: 1px solid #1c2e47; font-size: 11px; }
+.live-cell:last-child { border-right: 0; }
+.lc-lbl { color: var(--muted); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 2px; }
+.lc-val { font-weight: 800; font-size: 13px; color: #fff; }
+.lc-val.g { color: var(--green); }
+.lc-val.a { color: var(--amber); }
+.lc-val.r { color: var(--red); }
+
+/* ── Animated Battery Bar ────────────────────────────────────── */
+.batt-wrap {
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 16px; background: #0b1626; border-top: 1px solid #1c2e47;
+}
+.batt-lbl { font-size: 11px; color: var(--muted); font-weight: 700; width: 90px; flex-shrink: 0; }
+.batt-outer {
+  flex: 1; height: 13px; background: #16263b; border-radius: 99px;
+  overflow: hidden; border: 1px solid #283c56; position: relative;
+}
+.batt-inner {
+  height: 100%; border-radius: 99px;
+  transition: width 0.15s linear, background 0.3s ease;
+}
+.batt-threshold-marker {
+  position: absolute; top: 0; bottom: 0; width: 2px; background: var(--amber);
+  z-index: 2; opacity: 0.8;
+}
+.batt-pct { font-size: 12px; font-weight: 800; width: 48px; text-align: right; }
+
+/* ── Content Grid / Subpanel ─────────────────────────────────── */
+.contentgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+.subpanel {
+  background: #0b1626; border: 1px solid #253852; border-radius: 13px;
+  padding: 15px; min-width: 0;
+}
+.subpanel h4 { margin: 0 0 8px; font-size: 14px; font-weight: 800; }
+.subpanel p { margin: 0 0 10px; color: #c0cee2; font-size: 12px; line-height: 1.5; }
+.formula {
+  font: 11px/1.6 Consolas, Menlo, Monaco, monospace; background: #0f1e31;
+  border-left: 3px solid var(--teal); padding: 10px 12px;
+  border-radius: 0 8px 8px 0; overflow-wrap: anywhere; color: #d0eaff;
+}
+.step-controls {
+  display: flex; justify-content: space-between; gap: 8px;
+  margin-top: 12px; align-items: center;
+}
+.step-controls span { font-size: 11px; color: var(--muted); font-weight: 600; }
+.timeline { display: grid; gap: 8px; max-height: 280px; overflow-y: auto; padding-right: 4px; }
+.event { display: grid; grid-template-columns: 26px 1fr; gap: 9px; align-items: start; }
+.num {
+  width: 25px; height: 25px; display: grid; place-items: center; border-radius: 8px;
+  background: #1d374a; color: var(--teal); font-size: 10px; font-weight: 800;
+}
+.num.g { background: #0e2d20; color: var(--green); }
+.num.a { background: #2d2308; color: var(--amber); }
+.event p { margin: 0; font-size: 12px; color: #d5e0ef; font-weight: 600; }
+.event small { display: block; color: var(--muted); font-size: 10px; margin-top: 2px; }
+
+/* ── Battery Decision Card ───────────────────────────────────── */
+.bd-card {
+  background: #0d1a2c; border: 1px solid #263e5e; border-radius: 12px;
+  padding: 12px 14px; margin-top: 10px;
+}
+.bd-card h5 { margin: 0 0 8px; font-size: 12px; color: var(--amber); font-weight: 800; display: flex; justify-content: space-between; align-items: center; }
+.bd-row {
+  display: flex; justify-content: space-between; font-size: 11px;
+  padding: 5px 0; border-bottom: 1px solid #1a2c44;
+}
+.bd-row:last-child { border-bottom: 0; }
+.bd-l { color: var(--muted); font-weight: 600; }
+.bd-v { font-weight: 700; text-align: right; }
+.badge { display: inline-block; padding: 2px 7px; border-radius: 6px; font-size: 10px; font-weight: 800; }
+.badge.proceed { background: #0e2d20; color: var(--green); }
+.badge.charge { background: #2d2308; color: var(--amber); }
+.badge.bad { background: #3a1520; color: var(--red); }
+.badge.info { background: #162c45; color: var(--blue); }
+
+.charger-cand-table {
+  width: 100%; border-collapse: collapse; font-size: 10px; margin-top: 6px;
+}
+.charger-cand-table th, .charger-cand-table td {
+  padding: 4px 6px; border-bottom: 1px solid #1c2f48; text-align: left;
+}
+.charger-cand-table th { color: var(--muted); }
+.charger-cand-table tr.selected-row { background: rgba(84, 214, 199, 0.12); color: var(--teal); font-weight: 700; }
+
+/* ── B&B Tree ─────────────────────────────────────────────────── */
+.tree-scroll {
+  overflow: auto; background: #08121f; border: 1px solid #243750;
+  border-radius: 12px; min-height: 280px; padding: 12px;
+}
+.tree-svg { min-width: 800px; }
+.tree-node rect { fill: #13243a; stroke: #3f5876; stroke-width: 1.5; rx: 8; }
+.tree-node text { fill: #edf4ff; font-size: 10px; text-anchor: middle; font-weight: 600; }
+.tree-node .bnd { fill: #9cb0cc; font-size: 9px; font-weight: 400; }
+.tree-node.expanded rect { stroke: #7ea9ff; stroke-width: 2; }
+.tree-node.pruned rect { fill: #331924; stroke: #ff7d8c; }
+.tree-node.best rect { fill: #11423b; stroke: var(--teal); stroke-width: 2.5; filter: drop-shadow(0 0 6px var(--teal-glow)); }
+.tree-node.complete rect { stroke: #83aaff; }
+.tree-edge { stroke: #354a65; stroke-width: 1.5; }
+.tree-cap { display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); font-size: 11px; margin: 9px 0; font-weight: 600; }
+
+/* ── Tables ───────────────────────────────────────────────────── */
+.table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.table th, .table td { padding: 8px 7px; border-bottom: 1px solid #23364e; text-align: left; }
+.table th { color: var(--muted); font-weight: 700; }
+.good { color: var(--green); }
+.warn { color: var(--amber); }
+.bad { color: var(--red); }
+.notice {
+  padding: 10px 14px; border: 1px solid #6a5734; background: #2b2315;
+  border-radius: 10px; color: #ffdfa2; font-size: 12px; margin-bottom: 12px; line-height: 1.5;
+}
+.notice.ok { border-color: #1a5a45; background: #0c271b; color: #a0ffcf; }
+.notice.err { border-color: #5a2530; background: #2d1018; color: #ffb0b8; }
+.bar { height: 8px; background: #1f3148; border-radius: 99px; overflow: hidden; margin: 8px 0 12px; }
+.bar span { display: block; height: 100%; background: linear-gradient(90deg, var(--teal), var(--blue)); transition: width .3s; }
+.node-readout { font-size: 11px; color: var(--muted); margin-top: 8px; }
+.hidden { display: none !important; }
+
+footer { text-align: center; color: #6a7d97; font-size: 11px; padding: 20px; }
+
+/* ── Responsive adjustments ──────────────────────────────────── */
+@media(max-width: 1100px) {
+  .layout { grid-template-columns: 1fr; }
+  .metrics { grid-template-columns: repeat(3, 1fr); }
+  .live-strip { grid-template-columns: repeat(3, 1fr); }
+  .hero { align-items: start; flex-direction: column; }
+}
+@media(max-width: 650px) {
+  header { padding: 14px 4vw; }
+  .pill { display: none; }
+  .metrics { grid-template-columns: repeat(2, 1fr); }
+  .contentgrid { grid-template-columns: 1fr; }
+  .panel { padding: 12px; }
+  .grid2 { grid-template-columns: 1fr 1fr; }
+  .live-strip { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════ HEADER ════════════════════════════════════════════ -->
+<header>
+  <div class="brand">
+    <div class="logo">⚡</div>
+    <div>
+      <h1>VoltRoute</h1>
+      <p>Optimal Delivery and Charging Planning for EV-Based Delivery Partners</p>
+    </div>
+  </div>
+  <span class="pill">DAA VIRTUAL WORKING MODEL</span>
+</header>
+
+<main>
+<!-- ═══════════ HERO ══════════════════════════════════════════════ -->
+<section class="hero">
+  <div>
+    <div class="eyebrow">Algorithm Optimization &amp; Simulation Lab</div>
+    <h2>Deliver smarter. Charge strategically.</h2>
+    <p>Configure the EV battery and vehicle constraints, pick delivery jobs, and run the <b>Branch &amp; Bound</b> global route optimizer.
+       Press <b>Start Simulation</b> to watch the delivery partner navigate road by road at controllable speeds with full battery decision explanations.</p>
+  </div>
+  <div class="actions">
+    <button class="secondary" id="resetBtn">↺ Reset</button>
+    <button id="runBtn">▶ Run Optimization</button>
+  </div>
+</section>
+
+<!-- ═══════════ METRICS CARDS ════════════════════════════════════ -->
+<section class="metrics">
+  <div class="metric"><label>Planned distance</label><strong id="mDistance">—</strong><small>Including charging detours</small></div>
+  <div class="metric"><label>Energy consumed</label><strong id="mEnergy">—</strong><small>Estimated kWh</small></div>
+  <div class="metric"><label>Orders planned</label><strong id="mOrders">—</strong><small>Selected orders</small></div>
+  <div class="metric"><label>Completion estimate</label><strong id="mTime">—</strong><small>Travel + service + charging</small></div>
+  <div class="metric"><label>B&amp;B search states</label><strong id="mStates">—</strong><small>Expanded / pruned</small></div>
+</section>
+
+<div class="layout">
+<!-- ═══════════ SIDEBAR ═══════════════════════════════════════════ -->
+<aside>
+  <section class="panel">
+    <h3>Vehicle constraints</h3>
+    <p class="desc">Inputs validated by the Flask optimization backend.</p>
+    <div class="grid2">
+      <div><label>Battery capacity (kWh)</label><input id="capacity" type="number" min="5" max="120" value="40"></div>
+      <div><label>Starting charge (%)</label><input id="soc" type="number" min="10" max="100" value="75"></div>
+      <div><label>Efficiency (km/kWh)</label><input id="eff" type="number" min="2" max="12" step=".1" value="6"></div>
+      <div><label>Average speed (km/h)</label><input id="speed" type="number" min="10" max="80" value="30"></div>
+      <div><label>Charger rate (kW)</label><input id="rate" type="number" min="1" max="150" value="22"></div>
+      <div><label>Safety reserve (%)</label><input id="reserve" type="number" min="0" max="40" value="15"></div>
+    </div>
+    <label>Battery threshold (%) — triggers charging when projected ≤ T</label>
+    <input id="threshold" type="number" min="0" max="80" value="25">
+    <label>Route distance budget (km)</label>
+    <input id="budget" type="number" min="1" value="100">
+    <div class="node-readout">Road routing uses Dijkstra shortest paths on the simulation network.</div>
+  </section>
+
+  <section class="panel">
+    <h3>Delivery requests</h3>
+    <p class="desc">Select orders the EV must deliver.</p>
+    <div class="orders" id="orders"></div>
+    <div class="mini-actions">
+      <button class="secondary" id="selectAll">Select all</button>
+      <button class="secondary" id="clearAll">Clear</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h3>Charging network</h3>
+    <p class="desc">Stations available for charging detours.</p>
+    <table class="table">
+      <thead><tr><th>Station</th><th>Rate</th><th>Type</th></tr></thead>
+      <tbody>
+        <tr><td>CH-1</td><td>22 kW</td><td>Standard</td></tr>
+        <tr><td>CH-2</td><td>22 kW</td><td>Standard</td></tr>
+        <tr><td>CH-3</td><td>50 kW</td><td>Fast DC</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Battery Decisions Log Sidebar -->
+  <section class="panel" id="decisionPanel">
+    <h3>Battery threshold decisions</h3>
+    <p class="desc">Evaluated after completing each delivery.</p>
+    <div id="decisionRows">
+      <p style="color:var(--muted);font-size:11px">Run optimization to see battery decisions.</p>
+    </div>
+  </section>
+</aside>
+
+<!-- ═══════════ MAIN CONTENT ═════════════════════════════════════ -->
+<section>
+  <div class="tabs">
+    <button class="tab active" data-tab="simulation">Road simulation &amp; animation</button>
+    <button class="tab" data-tab="tree">Branch &amp; Bound search tree</button>
+    <button class="tab" data-tab="charging">Battery &amp; charging timeline</button>
+    <button class="tab" data-tab="theory">Algorithm &amp; viva guide</button>
+  </div>
+
+  <!-- ════ TAB: SIMULATION ═══════════════════════════════════════ -->
+  <section class="panel" id="simulationPanel">
+
+    <div class="mapbox">
+      <!-- Map Header -->
+      <div class="maphead">
+        <div>
+          <b>Simulated Road Network &amp; Route Visualization</b><br>
+          <span>City road graph G=(V,E) — travel moves along actual road segments computed via Dijkstra</span>
+        </div>
+        <span class="map-status-pill" id="mapStatus">Waiting for input</span>
+      </div>
+
+      <!-- SVG Map -->
+      <svg id="mapSvg" viewBox="0 0 700 340" aria-label="Animated EV route map">
+        <!-- Street network edges -->
+        <g id="roadNetwork">
+          <path class="road"  d="M70 265 L145 85 L225 185 L340 275 L445 165 L635 245"/>
+          <path class="road"  d="M70 265 L225 185 L300 70 L145 85"/>
+          <path class="road"  d="M300 70 L510 75 L635 245"/>
+          <path class="road"  d="M340 275 L510 75 L445 165"/>
+          <path class="road2" d="M145 85 L340 275 M225 185 L445 165 M70 265 L300 70"/>
+        </g>
+
+        <!-- Route paths -->
+        <path id="routeCompleted" class="routeCompleted" d=""/>
+        <path id="routeActive"    class="routeActive"    d=""/>
+
+        <!-- Stop order badges group (dynamic) -->
+        <g id="stopBadges"></g>
+
+        <!-- Graph Vertices -->
+        <g id="mapNodes">
+          <g data-node="Depot" transform="translate(70 265)" style="cursor:pointer">
+            <title>Depot (Start Hub) — Coordinates: (70, 265)</title>
+            <circle r="14" class="node visited"/>
+            <text y="-25" class="nlabel" text-anchor="middle">Depot</text>
+            <text y="30"  class="nsub"   text-anchor="middle">▶ Start</text>
+          </g>
+          <g data-node="Pharmacy" transform="translate(145 85)" style="cursor:pointer">
+            <title>Pharmacy (Order A) — Priority 5/5</title>
+            <circle r="12" class="node"/>
+            <text y="-20" class="nlabel" text-anchor="middle">Pharmacy</text>
+            <text y="27"  class="nsub"   text-anchor="middle">Order A</text>
+          </g>
+          <g data-node="Office" transform="translate(225 185)" style="cursor:pointer">
+            <title>Office (Order B) — Priority 3/5</title>
+            <circle r="12" class="node"/>
+            <text y="-20" class="nlabel" text-anchor="middle">Office</text>
+            <text y="27"  class="nsub"   text-anchor="middle">Order B</text>
+          </g>
+          <g data-node="Grocery" transform="translate(340 275)" style="cursor:pointer">
+            <title>Grocery (Order C) — Priority 4/5</title>
+            <circle r="12" class="node"/>
+            <text y="32"  class="nlabel" text-anchor="middle">Grocery</text>
+            <text y="-20" class="nsub"   text-anchor="middle">Order C</text>
+          </g>
+          <g data-node="CH-1" transform="translate(445 165)" style="cursor:pointer">
+            <title>CH-1 Charging Station — Standard 22 kW AC</title>
+            <circle r="13" class="node charger"/>
+            <text y="-22" class="nlabel" text-anchor="middle">CH-1</text>
+            <text y="28"  class="nsub"   text-anchor="middle">⚡22 kW</text>
+          </g>
+          <g data-node="CH-2" transform="translate(300 70)" style="cursor:pointer">
+            <title>CH-2 Charging Station — Standard 22 kW AC</title>
+            <circle r="13" class="node charger"/>
+            <text y="-22" class="nlabel" text-anchor="middle">CH-2</text>
+            <text y="28"  class="nsub"   text-anchor="middle">⚡22 kW</text>
+          </g>
+          <g data-node="CH-3" transform="translate(510 75)" style="cursor:pointer">
+            <title>CH-3 Fast Charging Station — 50 kW DC Fast Charger</title>
+            <circle r="13" class="node charger"/>
+            <text y="-22" class="nlabel" text-anchor="middle">CH-3</text>
+            <text y="28"  class="nsub"   text-anchor="middle">⚡50 kW</text>
+          </g>
+          <g data-node="Hub" transform="translate(635 245)" style="cursor:pointer">
+            <title>Hub (Ending Destination) — Coordinates: (635, 245)</title>
+            <circle r="14" class="node hubnode"/>
+            <text y="-25" class="nlabel" text-anchor="middle">Hub</text>
+            <text y="30"  class="nsub"   text-anchor="middle">◼ End</text>
+          </g>
+          <!-- Animated EV Marker -->
+          <g id="evMarker" transform="translate(70 265)">
+            <circle r="11" fill="#54d6c7" stroke="#ffffff" stroke-width="2.5" filter="drop-shadow(0 0 6px #54d6c7)"/>
+            <text y="4" text-anchor="middle" fill="#062321" font-size="11" font-weight="900">EV</text>
+          </g>
+        </g>
+      </svg>
+
+      <!-- Legend -->
+      <div class="legend">
+        <span><i class="dot" style="background:var(--teal)"></i>Delivery Sequence (Numbered 1, 2, 3)</span>
+        <span><i class="dot" style="background:var(--amber)"></i>Charging Stop (⚡ Recharging)</span>
+        <span><i class="dot" style="background:#5a7b9e;border:1px dashed #7ea9ff"></i>Road Transit Waypoint (No stop / no charge)</span>
+        <span><i class="dot" style="background:var(--blue)"></i>Depot / Hub</span>
+        <span><i class="dot-line" style="background:#2a6b64"></i>Completed Route</span>
+        <span><i class="dot-line" style="background:var(--teal);box-shadow:0 0 4px var(--teal)"></i>Active Road Segment</span>
+      </div>
+
+      <!-- Animation Control Bar -->
+      <div class="anim-bar">
+        <button id="btnPlay" disabled>▶ Start Simulation</button>
+        <button id="btnPause" class="secondary" disabled>⏸ Pause</button>
+        <button id="btnResume" class="secondary" disabled style="display:none">▶ Resume</button>
+        <button id="btnRestart" class="secondary" disabled>↺ Restart</button>
+        <button id="btnNext" class="secondary" disabled>⏭ Next Step</button>
+        <div class="speed-group">
+          <span class="speed-label">Speed:</span>
+          <button class="spd" data-spd="slow" title="4.0 seconds per road segment">Slow (4s)</button>
+          <button class="spd active" data-spd="normal" title="2.0 seconds per road segment">Normal (2s)</button>
+          <button class="spd" data-spd="fast" title="0.8 seconds per road segment">Fast (0.8s)</button>
+        </div>
+        <span class="step-prog" id="stepProg">Step 0 of 0</span>
+        <span class="anim-status" id="animStatus">Run optimization first</span>
+      </div>
+
+      <!-- Live Info Strip (6 cells) -->
+      <div class="live-strip">
+        <div class="live-cell"><div class="lc-lbl">Current location</div><div class="lc-val" id="liveLoc">—</div></div>
+        <div class="live-cell"><div class="lc-lbl">Next destination</div><div class="lc-val" id="liveNext">—</div></div>
+        <div class="live-cell"><div class="lc-lbl">Distance travelled</div><div class="lc-val" id="liveDist">—</div></div>
+        <div class="live-cell"><div class="lc-lbl">Battery remaining</div><div class="lc-val" id="liveBatt">—</div></div>
+        <div class="live-cell"><div class="lc-lbl">Energy consumed</div><div class="lc-val" id="liveEnergy">—</div></div>
+        <div class="live-cell"><div class="lc-lbl">Charging required?</div><div class="lc-val" id="liveCharge">—</div></div>
+      </div>
+
+      <!-- Animated Battery Bar -->
+      <div class="batt-wrap">
+        <div class="batt-lbl">Battery level:</div>
+        <div class="batt-outer">
+          <div class="batt-threshold-marker" id="battThresholdMarker" style="left:25%" title="Configured threshold"></div>
+          <div class="batt-inner" id="battBar" style="width:75%;background:var(--green)"></div>
+        </div>
+        <div class="batt-pct" id="battPct">75.0%</div>
+      </div>
+    </div><!-- /mapbox -->
+
+    <!-- Step Explanation + Execution Timeline -->
+    <div class="contentgrid">
+      <div class="subpanel">
+        <h4 id="stepTitle">Ready to optimize</h4>
+        <p id="stepText">Configure vehicle parameters, select delivery orders, and click <b>Run Optimization</b>.
+           The simulation does not run automatically on load — click <b>Start Simulation</b> to begin the visual demonstration.</p>
+        <div class="formula" id="stepFormula">Waiting for optimization…</div>
+
+        <!-- Battery Decision Card (Contextual) -->
+        <div class="bd-card hidden" id="bdCard">
+          <h5 id="bdTitle"><span>⚡ Battery Threshold Decision</span><span id="bdBadge" class="badge"></span></h5>
+          <div id="bdBody"></div>
+        </div>
+
+        <div class="step-controls">
+          <button class="secondary" id="prevStep" disabled>← Previous</button>
+          <span id="stepCount">Step 0 of 0</span>
+          <button class="secondary" id="nextStepExp" disabled>Next →</button>
+        </div>
+      </div>
+
+      <div class="subpanel">
+        <h4>Execution Trace</h4>
+        <div class="timeline" id="timeline">
+          <div class="event">
+            <div class="num">01</div>
+            <div>
+              <p>Waiting for optimization</p>
+              <small>Click Run Optimization to compute the route and populate the step trace.</small>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section><!-- /simulationPanel -->
+
+  <!-- ════ TAB: B&B SEARCH TREE ═══════════════════════════════════ -->
+  <section class="panel hidden" id="treePanel">
+    <h3>Branch &amp; Bound search tree</h3>
+    <p class="desc">Every node represents a partial delivery order and battery state.
+       Charging station branches are evaluated inside the B&amp;B search.
+       The admissible lower bound prunes branches that cannot improve the best known complete route.</p>
+    <div class="tree-cap">
+      <span class="good">● Best complete solution</span>
+      <span>● Expanded state</span>
+      <span class="bad">● Pruned branch (LB ≥ Best)</span>
+      <span style="color:var(--blue)">● Feasible completion</span>
+    </div>
+    <div class="tree-scroll">
+      <svg id="treeSvg" class="tree-svg" viewBox="0 0 900 380"></svg>
+    </div>
+    <p class="node-readout" id="treeReadout">Run optimization to view the search tree.</p>
+  </section>
+
+  <!-- ════ TAB: BATTERY & CHARGING TIMELINE ═══════════════════════ -->
+  <section class="panel hidden" id="chargingPanel">
+    <h3>Battery and charging timeline</h3>
+    <p class="desc">Track battery depletion during travel and replenishment at charging stops.
+       Threshold checks and safety reserves are strictly enforced at every decision point.</p>
+    <div id="chargingSummary" class="notice">Run optimization to calculate charging schedule.</div>
+    <div class="bar"><span id="socBar" style="width:75%"></span></div>
+    <div class="node-readout" id="socLabel">Starting SOC: 75%</div>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>#</th><th>Event</th><th>From → To</th><th>Distance / Charge</th>
+          <th>Battery before</th><th>Battery after</th>
+        </tr>
+      </thead>
+      <tbody id="chargingRows"><tr><td colspan="6">No data yet.</td></tr></tbody>
+    </table>
+  </section>
+
+  <!-- ════ TAB: THEORY & VIVA GUIDE ════════════════════════════════ -->
+  <section class="panel hidden" id="theoryPanel">
+    <h3>Algorithm Overview &amp; College Viva Reference</h3>
+    <p class="desc">Key concepts, mathematical guarantees, and formulas for DAA viva presentation.</p>
+    <div class="contentgrid">
+      <div class="subpanel">
+        <h4>1. Branch &amp; Bound with Joint Charging</h4>
+        <p>A min-priority queue explores delivery sequences ordered by lower bound.
+           Rather than scheduling charging in a separate heuristic pass, charging stops are evaluated
+           <b>inside the Branch &amp; Bound search state</b>: whenever direct delivery violates the battery
+           threshold rule, all reachable charging stations are expanded as candidate branches.
+           All branches compete on the exact same admissible lower bound.</p>
+        <div class="formula">State = (cur_node, delivered_mask, battery_kWh)
+LB = cost_so_far
+   + min(cur → remaining)
+   + MST(remaining)
+   + min(remaining → Hub)
+
+Admissibility: LB ≤ true_cost ⟹ Global optimality guaranteed!</div>
+      </div>
+
+      <div class="subpanel">
+        <h4>2. Dijkstra's Algorithm on Road Network</h4>
+        <p>The simulated city road network is represented as an undirected graph G=(V,E)
+           with 8 vertices (Depot, 3 Deliveries, 3 Chargers, Hub) and non-negative weighted road edges.
+           Dijkstra's algorithm finds the shortest path and sequence of road vertices between every pair of stops.
+           The animated vehicle drives along the actual road segments one by one.</p>
+        <div class="formula">Dijkstra Shortest Path: O((V + E) log V) with min-heap
+Road Edges: 15 street segments matching the map layout
+Actual road sequences animated segment-by-segment.</div>
+      </div>
+
+      <div class="subpanel">
+        <h4>3. Battery Decision Rule &amp; 6 Outcomes</h4>
+        <p>After each delivery (and initially at Depot), evaluate battery before selecting the next destination:</p>
+        <div class="formula">projected = battery_kWh − (distance / efficiency)
+
+1. Battery above threshold: projected &gt; T and ≥ R → proceed direct
+2. Battery at threshold: projected == T → evaluate chargers
+3. Battery below threshold: R ≤ projected &lt; T → evaluate chargers
+4. Insufficient battery: projected &lt; R → evaluate chargers
+5. No feasible charger: no station reachable → report infeasible
+6. All deliveries completed → proceed to Hub</div>
+      </div>
+
+      <div class="subpanel">
+        <h4>4. Why Nearest Charger is Not Always Best</h4>
+        <p>A greedy approach of choosing the geographically closest charger can increase the total route cost
+           or lead to an infeasible continuation. For example, a charger 2 km away might require a 15 km detour
+           to reach the next delivery, whereas a charger 3 km away lies directly on the path to the delivery
+           and requires only a 1 km detour. The optimizer evaluates the <b>total continuation distance</b>.</p>
+        <div class="formula">Min: detour(cur → charger) + distance(charger → next)
+Evaluated across all reachable stations in the B&amp;B search.</div>
+      </div>
+
+      <div class="subpanel">
+        <h4>5. Time &amp; Space Complexity Summary</h4>
+        <div class="formula">Branch &amp; Bound Worst-Case: O(n! × |Chargers|ⁿ)
+MST Lower Bound (Prim): O(n²) per expanded node
+Dijkstra: O((V + E) log V)
+For n=3 orders: 3! = 6 permutations; pruned in &lt;0.05 seconds.</div>
+      </div>
+
+      <div class="subpanel">
+        <h4>6. Model Assumptions &amp; Scope</h4>
+        <div class="formula" id="assumptionsList">Loading assumptions…</div>
+      </div>
+    </div>
+  </section>
+
+</section><!-- /main content col -->
+</div><!-- /layout -->
+</main>
+
+<footer>VoltRoute · Flask + Python · Educational Working Model for DAA FA2 · Real Road Network Graph with Dijkstra &amp; Branch and Bound</footer>
+
+<!-- ═════════════════════════════════════════════════════════════
+     JAVASCRIPT SIMULATION ENGINE
+═════════════════════════════════════════════════════════════ -->
+<script>
+"use strict";
+
+const $   = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+/* ── Node Pixel Coordinates (matching SVG) ────────────────────── */
+const NODE_POS = {
+  "Depot":    {x:70,  y:265},
+  "Pharmacy": {x:145, y:85 },
+  "Office":   {x:225, y:185},
+  "Grocery":  {x:340, y:275},
+  "CH-1":     {x:445, y:165},
+  "CH-2":     {x:300, y:70 },
+  "CH-3":     {x:510, y:75 },
+  "Hub":      {x:635, y:245},
+};
+
+/* ── Speed Presets (ms per road segment) ───────────────────────── */
+const SPEEDS = {
+  slow:   4000,   // ~4 seconds per segment
+  normal: 2000,   // ~2 seconds per segment (default)
+  fast:   800     // ~0.8 seconds per segment
+};
+let curSpeed = "normal";
+
+/* ── Global State ─────────────────────────────────────────────── */
+let result    = null;    // last API result
+let simSteps  = [];      // granular road-segment simulation steps
+let simIdx    = 0;       // active simulation step
+let expIdx    = 0;       // active explanation step
+let running   = false;
+let paused    = false;
+let animTimer = null;    // interval/rAF for EV movement
+let stepTimer = null;    // timeout for scheduling next step
+let pauseState = null;   // stores progress when paused mid-segment
+
+/* ── Order Metadata ───────────────────────────────────────────── */
+const ORDER_META = [
+  {id:"A", name:"Order A · Pharmacy", detail:"Medicine parcel · 2.0 kg · Priority 5/5 · Deadline 35m"},
+  {id:"B", name:"Order B · Office",   detail:"Office legal docs · 1.0 kg · Priority 3/5 · Deadline 50m"},
+  {id:"C", name:"Order C · Grocery",  detail:"Fresh grocery pack · 4.0 kg · Priority 4/5 · Deadline 45m"},
+];
+
+/* ─────────────────────────────────────────────────────────────── */
+/* INITIALIZATION                                                  */
+/* ─────────────────────────────────────────────────────────────── */
+function init(){
+  renderOrders();
+  setBattBar(75);
+  setCtrlState("idle");
+}
+
+function renderOrders(){
+  $("orders").innerHTML = ORDER_META.map(o =>
+    `<label class="order" style="margin:0">
+       <span><b>${esc(o.name)}</b><small>${esc(o.detail)}</small></span>
+       <input type="checkbox" data-order="${o.id}" checked>
+     </label>`).join("");
+}
+
+function buildPayload(){
+  return {
+    capacity_kwh:      +$("capacity").value,
+    soc_pct:           +$("soc").value,
+    km_per_kwh:        +$("eff").value,
+    average_speed_kmh: +$("speed").value,
+    charger_kw:        +$("rate").value,
+    reserve_pct:       +$("reserve").value,
+    threshold_pct:     +$("threshold").value,
+    route_budget_km:   +$("budget").value,
+    order_ids: [...document.querySelectorAll("[data-order]:checked")].map(x => x.dataset.order),
+  };
+}
+
+/* ─────────────────────────────────────────────────────────────── */
+/* API CALL                                                        */
+/* ─────────────────────────────────────────────────────────────── */
+async function runOptimize(){
+  stopAll();
+  $("runBtn").disabled = true;
+  $("mapStatus").textContent = "Optimizing via Flask Branch & Bound…";
+
+  try {
+    const res = await fetch("/api/optimize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildPayload()),
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || "Optimization failed.");
+    result   = data;
+    simSteps = data.simulation_steps || [];
+    simIdx   = 0;
+    expIdx   = 0;
+    renderAll();
+  } catch(err) {
+    alert("Error: " + err.message);
+    $("mapStatus").textContent = "Optimization Error";
+  } finally {
+    $("runBtn").disabled = false;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────── */
+/* RENDER PANELS                                                   */
+/* ─────────────────────────────────────────────────────────────── */
+function renderAll(){
+  if(!result) return;
+  const m = result.metrics;
+
+  /* Metric cards */
+  if(result.feasible){
+    $("mDistance").textContent = m.distance_km.toFixed(2) + " km";
+    $("mEnergy").textContent   = m.energy_kwh.toFixed(2) + " kWh";
+    $("mOrders").textContent   = m.orders_done + " / " + m.orders_total;
+    $("mTime").textContent     = m.time_min.toFixed(0) + " min";
+  } else {
+    ["mDistance", "mEnergy", "mTime"].forEach(id => $(id).textContent = "—");
+    $("mOrders").textContent   = m.orders_done + " / " + m.orders_total;
+  }
+  $("mStates").textContent = result.explored_states + " / " + result.pruned_states;
+
+  /* Infeasible outcome handling */
+  if(!result.feasible){
+    $("mapStatus").textContent = "Infeasible ✗";
+    $("stepTitle").textContent = "No Feasible Route Found";
+    $("stepText").textContent  = result.infeasibility_reason ||
+      "Battery cannot bridge the deliveries without violating threshold or reserve.";
+    $("stepFormula").textContent = "Try raising initial SOC, increasing capacity, or lowering threshold.";
+    renderTree();
+    setCtrlState("idle");
+    return;
+  }
+
+  $("mapStatus").textContent = m.within_budget ? "Optimal Plan Ready ✓" : "⚠ Exceeds Budget";
+
+  /* Reset map & set initial EV position */
+  resetMap();
+  drawFaintRoute(result.planned_route);
+  renderStopBadges(result.route_order, result.planned_route);
+  setBattBar(result.config.soc_pct);
+
+  /* Set threshold marker line on battery bar */
+  $("battThresholdMarker").style.left = result.config.threshold_pct + "%";
+
+  /* Render panels */
+  expIdx = 0;
+  renderExpStep();
+  renderTree();
+  renderCharging();
+  renderDecisions();
+
+  if(result.assumptions){
+    $("assumptionsList").textContent = result.assumptions.join("\n• ");
+  }
+
+  /* Ready state for simulation (does not auto-run!) */
+  setCtrlState("ready");
+  $("stepProg").textContent   = `Step 0 of ${simSteps.length}`;
+  $("animStatus").textContent = "Ready — Press Start Simulation";
+  updateLiveInfo(null, null);
+}
+
+/* ── Stop Number Badges on Map Nodes ─────────────────────────── */
+function renderStopBadges(orderSeq, plannedRoute){
+  const g = $("stopBadges");
+  if(!g) return;
+  let html = "";
+  if(orderSeq && orderSeq.length){
+    html += orderSeq.map((nodeName, idx) => {
+      const pos = NODE_POS[nodeName];
+      if(!pos) return "";
+      return `<g class="stop-badge delivery-badge" transform="translate(${pos.x + 14} ${pos.y - 14})">
+        <circle r="8"/>
+        <text y="3">${idx + 1}</text>
+      </g>`;
+    }).join("");
+  }
+  // Badges for actual scheduled charging stops in planned route
+  if(plannedRoute){
+    const chStops = plannedRoute.filter(n => n && n.startsWith("CH-"));
+    chStops.forEach(chName => {
+      const pos = NODE_POS[chName];
+      if(pos){
+        html += `<g class="stop-badge charger-badge" transform="translate(${pos.x + 15} ${pos.y - 15})">
+          <circle r="9"/>
+          <text y="3">⚡</text>
+        </g>`;
+      }
+    });
+  }
+  g.innerHTML = html;
+}
+
+/* ─────────────────────────────────────────────────────────────── */
+/* ANIMATION CONTROLLER & STATE MACHINE                           */
+/* ─────────────────────────────────────────────────────────────── */
+
+function setCtrlState(state){
+  const P  = $("btnPlay"),
+        Pa = $("btnPause"),
+        R  = $("btnResume"),
+        Re = $("btnRestart"),
+        N  = $("btnNext");
+
+  Pa.style.display = "inline-block";
+  R.style.display  = "none";
+
+  switch(state){
+    case "idle":
+      P.disabled = true;  Pa.disabled = true;  R.disabled = true;
+      Re.disabled = true; N.disabled = true;
+      break;
+    case "ready":
+      P.disabled = false; Pa.disabled = true;  R.disabled = true;
+      Re.disabled = true; N.disabled = false;
+      break;
+    case "running":
+      P.disabled = true;  Pa.disabled = false; R.disabled = true;
+      Re.disabled = false; N.disabled = false;
+      Pa.style.display = "inline-block"; R.style.display = "none";
+      break;
+    case "paused":
+      P.disabled = true;  Pa.disabled = true;  R.disabled = false;
+      Re.disabled = false; N.disabled = false;
+      Pa.style.display = "none"; R.style.display = "inline-block";
+      break;
+    case "done":
+      P.disabled = true;  Pa.disabled = true;  R.disabled = true;
+      Re.disabled = false; N.disabled = true;
+      break;
+  }
+}
+
+function startSim(){
+  if(!result || !result.feasible) return;
+  running = true;
+  paused = false;
+  simIdx = 0;
+  pauseState = null;
+  resetMap();
+  drawFaintRoute(result.planned_route);
+  renderStopBadges(result.route_order, result.planned_route);
+  setCtrlState("running");
+  $("animStatus").textContent = "Running simulation…";
+  executeStep(simIdx);
+}
+
+function pauseSim(){
+  if(!running || paused) return;
+  paused = true;
+  clearTimeout(stepTimer);
+  stepTimer = null;
+  clearInterval(animTimer);
+  animTimer = null;
+  setCtrlState("paused");
+  $("animStatus").textContent = "Simulation paused";
+}
+
+function resumeSim(){
+  if(!paused) return;
+  paused = false;
+  setCtrlState("running");
+  $("animStatus").textContent = "Resuming simulation…";
+
+  // If paused mid-segment, continue from saved fraction
+  if(pauseState){
+    continueSegmentAnimation(pauseState);
+  } else {
+    scheduleNext(300);
+  }
+}
+
+function restartSim(){
+  stopAll();
+  simIdx = 0;
+  expIdx = 0;
+  running = false;
+  paused = false;
+  pauseState = null;
+  resetMap();
+  drawFaintRoute(result.planned_route);
+  renderStopBadges(result.route_order, result.planned_route);
+  setBattBar(result.config.soc_pct);
+  setCtrlState("ready");
+  $("stepProg").textContent   = `Step 0 of ${simSteps.length}`;
+  $("animStatus").textContent = "Restarted — Press Start Simulation";
+  renderExpStep();
+  updateLiveInfo(null, null);
+  hideBdCard();
+}
+
+function nextStepManual(){
+  if(!result || !result.feasible) return;
+  clearTimeout(stepTimer);
+  stepTimer = null;
+  clearInterval(animTimer);
+  animTimer = null;
+  pauseState = null;
+
+  if(simIdx < simSteps.length - 1){
+    simIdx++;
+    executeStep(simIdx, true); // immediate mode
+    $("stepProg").textContent = `Step ${simIdx + 1} of ${simSteps.length}`;
+    syncExpToSim();
+  }
+}
+
+function stopAll(){
+  running = false;
+  paused = false;
+  clearTimeout(stepTimer);
+  stepTimer = null;
+  clearInterval(animTimer);
+  animTimer = null;
+  pauseState = null;
+}
+
+/* ─────────────────────────────────────────────────────────────── */
+/* EXECUTE INDIVIDUAL SIMULATION STEP                             */
+/* ─────────────────────────────────────────────────────────────── */
+function executeStep(idx, instantMode = false){
+  const step = simSteps[idx];
+  if(!step) return;
+
+  $("stepProg").textContent   = `Step ${idx + 1} of ${simSteps.length}`;
+  $("animStatus").textContent = step.title;
+
+  const nextStep = simSteps[idx + 1] || null;
+  updateLiveInfo(step, nextStep);
+  syncExpToSim();
+
+  const { type, from, to } = step;
+
+  // 1. Start at Depot
+  if(type === "start"){
+    setNodeClass("Depot", "current");
+    moveEVTo("Depot");
+    setBattBar(step.battery_pct);
+    hideBdCard();
+    if(!instantMode && running && !paused){
+      scheduleNext(step.dwell_ms || 1500);
+    }
+    return;
+  }
+
+  // 2. Battery Decision evaluation
+  if(type === "battery_decision"){
+    setNodeClass(from, "current");
+    showBdCard(step);
+    setBattBar(step.battery_pct);
+    if(!instantMode && running && !paused){
+      scheduleNext(step.dwell_ms || 2500);
+    }
+    return;
+  }
+
+  hideBdCard();
+
+  // 3. Charging at station
+  if(type === "charge"){
+    setNodeClass(step.station, "charging-active");
+    moveEVTo(step.station);
+    $("liveCharge").textContent = "Charging ⚡";
+    $("liveCharge").className   = "lc-val a";
+
+    const chargeDuration = instantMode ? 50 : Math.round(SPEEDS[curSpeed] * 1.1);
+    animateChargingBattery(step.battery_before_pct, step.battery_after_pct, chargeDuration, () => {
+      setBattBar(step.battery_after_pct);
+      if(!instantMode && running && !paused){
+        scheduleNext(1000);
+      }
+    });
+    return;
+  }
+
+  // 4. Road segment travel (travel_segment, delivery, travel_to_charger, finish)
+  if(type === "travel_segment" || type === "delivery" || type === "travel_to_charger" || type === "finish"){
+    setNodeClass(from, "visited");
+    if(!step.is_transit_waypoint){
+      setNodeClass(to, type === "travel_to_charger" ? "charging-active" : "current");
+    } else {
+      setNodeClass(to, "transit-waypoint");
+    }
+    highlightActiveSegment(from, to);
+    appendCompletedSegment(from, to);
+
+    const segDuration = instantMode ? 50 : SPEEDS[curSpeed];
+
+    animateSegmentTravel(from, to, step.battery_before_pct, step.battery_after_pct, segDuration, () => {
+      setBattBar(step.battery_after_pct);
+
+      // Brief dwell pause at final destinations / deliveries
+      let dwell = 100;
+      if(type === "delivery" || type === "finish" || type === "travel_to_charger"){
+        dwell = step.dwell_ms || 2000;
+      }
+
+      if(!instantMode && running && !paused){
+        scheduleNext(dwell);
+      }
+    });
+  }
+}
+
+function scheduleNext(delayMs){
+  clearTimeout(stepTimer);
+  if(!running || paused) return;
+
+  stepTimer = setTimeout(() => {
+    if(!running || paused) return;
+    if(simIdx < simSteps.length - 1){
+      simIdx++;
+      executeStep(simIdx);
+    } else {
+      running = false;
+      setCtrlState("done");
+      $("animStatus").textContent = "Simulation complete ✓ All deliveries finished!";
+      $("liveNext").textContent = "—";
+      $("liveCharge").textContent = "Finished";
+    }
+  }, delayMs);
+}
+
+/* ── Smooth Road Segment Animation with Gradual Battery Drain ─ */
+function animateSegmentTravel(fromNode, toNode, batStart, batEnd, durationMs, onDone){
+  clearInterval(animTimer);
+  pauseState = null;
+
+  const a = NODE_POS[fromNode], b = NODE_POS[toNode];
+  if(!a || !b){
+    moveEVTo(toNode);
+    setBattBar(batEnd);
+    if(onDone) onDone();
+    return;
+  }
+
+  const startTime = Date.now();
+  const fpsInterval = 16; // ~60fps
+
+  animTimer = setInterval(() => {
+    const elapsed = Date.now() - startTime;
+    const progress = Math.min(1.0, elapsed / durationMs);
+    const ease = easeInOutQuad(progress);
+
+    // Gradual EV coordinates
+    const curX = a.x + (b.x - a.x) * ease;
+    const curY = a.y + (b.y - a.y) * ease;
+    $("evMarker").setAttribute("transform", `translate(${curX.toFixed(1)} ${curY.toFixed(1)})`);
+
+    // Gradual battery drainage
+    const curBatt = batStart + (batEnd - batStart) * ease;
+    setBattBar(curBatt);
+    $("liveBatt").textContent = curBatt.toFixed(1) + "%";
+
+    if(progress >= 1.0){
+      clearInterval(animTimer);
+      animTimer = null;
+      $("evMarker").setAttribute("transform", `translate(${b.x} ${b.y})`);
+      setBattBar(batEnd);
+      $("liveBatt").textContent = batEnd.toFixed(1) + "%";
+      pauseState = null;
+      if(onDone) onDone();
+    } else {
+      // Save state in case pause is clicked mid-travel
+      pauseState = {
+        fromNode, toNode, batStart, batEnd,
+        progress, remainingMs: durationMs - elapsed, onDone
+      };
+    }
+  }, fpsInterval);
+}
+
+function continueSegmentAnimation(saved){
+  clearInterval(animTimer);
+  const a = NODE_POS[saved.fromNode], b = NODE_POS[saved.toNode];
+  const startTime = Date.now();
+  const startProg = saved.progress;
+  const dur = saved.remainingMs;
+
+  animTimer = setInterval(() => {
+    const elapsed = Date.now() - startTime;
+    const addProg = (1.0 - startProg) * Math.min(1.0, elapsed / dur);
+    const progress = Math.min(1.0, startProg + addProg);
+    const ease = easeInOutQuad(progress);
+
+    const curX = a.x + (b.x - a.x) * ease;
+    const curY = a.y + (b.y - a.y) * ease;
+    $("evMarker").setAttribute("transform", `translate(${curX.toFixed(1)} ${curY.toFixed(1)})`);
+
+    const curBatt = saved.batStart + (saved.batEnd - saved.batStart) * ease;
+    setBattBar(curBatt);
+    $("liveBatt").textContent = curBatt.toFixed(1) + "%";
+
+    if(progress >= 1.0){
+      clearInterval(animTimer);
+      animTimer = null;
+      pauseState = null;
+      $("evMarker").setAttribute("transform", `translate(${b.x} ${b.y})`);
+      setBattBar(saved.batEnd);
+      if(saved.onDone) saved.onDone();
+    } else {
+      pauseState = {
+        fromNode: saved.fromNode, toNode: saved.toNode,
+        batStart: saved.batStart, batEnd: saved.batEnd,
+        progress, remainingMs: dur - elapsed, onDone: saved.onDone
+      };
+    }
+  }, 16);
+}
+
+/* ── Smooth Battery Charging Replenishment Animation ────────── */
+function animateChargingBattery(startPct, endPct, durationMs, onDone){
+  clearInterval(animTimer);
+  const startTime = Date.now();
+
+  animTimer = setInterval(() => {
+    const elapsed = Date.now() - startTime;
+    const progress = Math.min(1.0, elapsed / durationMs);
+    const curBatt = startPct + (endPct - startPct) * progress;
+
+    setBattBar(curBatt);
+    $("liveBatt").textContent = curBatt.toFixed(1) + "%";
+
+    if(progress >= 1.0){
+      clearInterval(animTimer);
+      animTimer = null;
+      setBattBar(endPct);
+      $("liveBatt").textContent = endPct.toFixed(1) + "%";
+      if(onDone) onDone();
+    }
+  }, 20);
+}
+
+function moveEVTo(nodeName){
+  const p = NODE_POS[nodeName];
+  if(p){
+    $("evMarker").setAttribute("transform", `translate(${p.x} ${p.y})`);
+  }
+}
+
+function easeInOutQuad(t){ return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; }
+
+/* ── Route Line Drawing ───────────────────────────────────────── */
+function drawFaintRoute(route){
+  if(!route || !route.length) return;
+  const pts = route.map(n => NODE_POS[n]).filter(Boolean);
+  const d = pts.map((p, i) => (i ? "L" : "M") + p.x + " " + p.y).join(" ");
+  $("routeCompleted").setAttribute("d", d);
+  $("routeCompleted").style.opacity = "0.35";
+  $("routeActive").setAttribute("d", "");
+  $("routeActive").style.opacity = "0";
+}
+
+function appendCompletedSegment(fromNode, toNode){
+  const el = $("routeCompleted");
+  const cur = el.getAttribute("d") || "";
+  const b = NODE_POS[toNode];
+  if(!b) return;
+  if(!cur){
+    const a = NODE_POS[fromNode];
+    if(a) el.setAttribute("d", `M${a.x} ${a.y} L${b.x} ${b.y}`);
+  } else {
+    el.setAttribute("d", cur + ` L${b.x} ${b.y}`);
+  }
+  el.style.opacity = "1";
+}
+
+function highlightActiveSegment(fromNode, toNode){
+  const a = NODE_POS[fromNode], b = NODE_POS[toNode];
+  if(!a || !b) return;
+  $("routeActive").setAttribute("d", `M${a.x} ${a.y} L${b.x} ${b.y}`);
+  $("routeActive").style.opacity = "1";
+}
+
+function setNodeClass(name, cls){
+  const g = document.querySelector(`#mapNodes [data-node="${CSS.escape(name)}"]`);
+  if(!g) return;
+  const c = g.querySelector("circle");
+  c.classList.remove("visited", "current", "charging-active", "transit-waypoint");
+  if(cls) c.classList.add(cls);
+}
+
+function resetMap(){
+  document.querySelectorAll("#mapNodes [data-node] circle").forEach(c =>
+    c.classList.remove("visited", "current", "charging-active", "transit-waypoint"));
+  setNodeClass("Depot", "visited");
+  $("routeCompleted").setAttribute("d", "");
+  $("routeCompleted").style.opacity = "0";
+  $("routeActive").setAttribute("d", "");
+  $("routeActive").style.opacity = "0";
+  moveEVTo("Depot");
+}
+
+/* ── Live Info Strip Updates ──────────────────────────────────── */
+function updateLiveInfo(step, nextStep){
+  if(!step){
+    ["liveLoc", "liveNext", "liveDist", "liveBatt", "liveEnergy", "liveCharge"]
+      .forEach(id => $(id).textContent = "—");
+    return;
+  }
+  const pct   = step.battery_pct ?? 0;
+  const pctCl = pct > 40 ? "g" : pct > 20 ? "a" : "r";
+  const target = step.target_destination || step.final_destination || step.to;
+
+  if(step.is_transit_waypoint){
+    $("liveLoc").textContent  = `${step.from} (En route)`;
+    $("liveNext").textContent = `${target} (via ${step.to} waypoint)`;
+  } else {
+    $("liveLoc").textContent  = step.from || "—";
+    $("liveNext").textContent = (target && target !== step.from)
+      ? target : (nextStep && nextStep.to !== nextStep.from ? nextStep.to : "—");
+  }
+
+  $("liveDist").textContent   = step.distance_so_far_km != null
+    ? step.distance_so_far_km.toFixed(2) + " km" : "—";
+  $("liveBatt").textContent   = pct.toFixed(1) + "%";
+  $("liveBatt").className     = "lc-val " + pctCl;
+  $("liveEnergy").textContent = step.energy_so_far_kwh != null
+    ? step.energy_so_far_kwh.toFixed(2) + " kWh" : "—";
+
+  if(step.type === "charge"){
+    $("liveCharge").textContent = `Charging at ${step.station || step.to} ⚡`;
+    $("liveCharge").className   = "lc-val a";
+  } else if(step.type === "travel_to_charger"){
+    $("liveCharge").textContent = `En route to Charger (${step.to}) ⚡`;
+    $("liveCharge").className   = "lc-val a";
+  } else if(step.is_transit_waypoint && (step.to.startsWith("CH-") || (result && result.chargers && result.chargers.includes(step.to)))){
+    $("liveCharge").textContent = `No (Transit waypoint · ${step.to})`;
+    $("liveCharge").className   = "lc-val g";
+  } else if(step.type === "battery_decision"){
+    if(step.selected_charger){
+      $("liveCharge").textContent = `Yes (${step.selected_charger}) ⚡`;
+      $("liveCharge").className   = "lc-val a";
+    } else {
+      $("liveCharge").textContent = "No";
+      $("liveCharge").className   = "lc-val g";
+    }
+  } else {
+    $("liveCharge").textContent = "No";
+    $("liveCharge").className   = "lc-val g";
+  }
+}
+
+/* ── Battery Bar ──────────────────────────────────────────────── */
+function setBattBar(pct){
+  const p   = Math.max(0, Math.min(100, pct || 0));
+  const bar = $("battBar");
+  bar.style.width      = p + "%";
+  bar.style.background = p > 40 ? "var(--green)" : p > 20 ? "var(--amber)" : "var(--red)";
+  $("battPct").textContent = p.toFixed(1) + "%";
+}
+
+/* ── Battery Decision Card (Section 4 & Requirement 2) ─────────── */
+function showBdCard(step){
+  $("bdCard").classList.remove("hidden");
+  $("bdTitle").innerHTML = `<span>⚡ ${esc(step.title)}</span>`;
+
+  const dec = step.battery_decision || {};
+  const cfg = result.config;
+  const candidates = dec.charger_candidates || [];
+  const sel = step.selection_reason || null;
+
+  let badgeCl = "proceed";
+  let badgeTxt = "Proceed direct (No charge)";
+  if(dec.status === "threshold_equal"){
+    badgeCl = "charge"; badgeTxt = "Equal to threshold · Charging evaluated";
+  } else if(dec.status === "below_threshold"){
+    badgeCl = "charge"; badgeTxt = "Below threshold · Charging required";
+  } else if(dec.status === "insufficient"){
+    badgeCl = "bad"; badgeTxt = "Insufficient battery · Emergency charge";
+  } else if(step.selected_charger){
+    badgeCl = "charge"; badgeTxt = `Charging at ${step.selected_charger}`;
+  }
+  $("bdBadge").className = `badge ${badgeCl}`;
+  $("bdBadge").textContent = badgeTxt;
+
+  // Build candidate chargers evaluation table
+  let candTableHtml = "";
+  if(candidates.length){
+    candTableHtml = `
+      <div style="margin-top:10px;overflow-x:auto">
+        <span class="bd-l" style="font-weight:700">Reachable Charging Stations Evaluated:</span>
+        <table class="charger-cand-table">
+          <thead>
+            <tr>
+              <th>Station</th>
+              <th>Dist to Charger</th>
+              <th>Energy</th>
+              <th>Arrival SOC</th>
+              <th>Recharge</th>
+              <th>Detour Effect</th>
+              <th>Feasible?</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${candidates.map(c => {
+              const isSel = c.name === step.selected_charger;
+              return `
+              <tr class="${isSel ? 'selected-row' : ''}">
+                <td><b>${esc(c.name)}</b> ${isSel ? '★ Selected' : ''}</td>
+                <td>${c.dist_to_charger_km.toFixed(2)} km</td>
+                <td>${c.energy_to_charger_kwh.toFixed(2)} kWh</td>
+                <td>${c.battery_at_charger_pct.toFixed(1)}%</td>
+                <td>+${c.energy_added_kwh != null ? c.energy_added_kwh.toFixed(2) : '—'} kWh</td>
+                <td>+${c.detour_increase_km != null ? c.detour_increase_km.toFixed(2) : (c.total_detour_dist_km - (dec.leg_dist_km||0)).toFixed(2)} km</td>
+                <td>${c.continuation_feasible ? '<span class="good">✓ Feasible</span>' : '<span class="bad">✗ Infeasible</span>'}</td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  // Exact metrics rows
+  const rows = [];
+  rows.push({l: "Current Location", v: step.from || "—"});
+  rows.push({l: "Next Destination", v: step.target_destination || step.to || (dec.nxt || "—")});
+  rows.push({l: "Battery Before Journey", v: `${dec.current_soc_pct != null ? dec.current_soc_pct.toFixed(1) : (step.battery_pct||0).toFixed(1)}% (${dec.current_battery_kwh != null ? dec.current_battery_kwh.toFixed(2) : (step.battery_kwh||0).toFixed(2)} kWh)`});
+  rows.push({l: "Direct Journey Distance", v: `${dec.leg_dist_km != null ? dec.leg_dist_km.toFixed(2) : '—'} km (Needs ${dec.needed_kwh != null ? dec.needed_kwh.toFixed(2) : '—'} kWh)`});
+  rows.push({l: "Projected Direct Battery", v: `${dec.projected_soc_pct != null ? dec.projected_soc_pct.toFixed(1) : '—'}% (${dec.projected_battery_kwh != null ? dec.projected_battery_kwh.toFixed(2) : '—'} kWh)`});
+  rows.push({l: "Threshold Comparison", v: `${dec.projected_soc_pct != null ? dec.projected_soc_pct.toFixed(1) : '—'}% vs Configured Threshold ${cfg.threshold_pct}% (${(cfg.capacity_kwh * cfg.threshold_pct / 100).toFixed(2)} kWh) · ${dec.can_proceed_direct ? 'Above Threshold ✓' : 'At/Below Threshold ✗'}`});
+  rows.push({l: "Safety Reserve Check", v: `Safety Reserve ${cfg.reserve_pct}% (${(cfg.capacity_kwh * cfg.reserve_pct / 100).toFixed(2)} kWh) · ${dec.projected_battery_kwh >= (cfg.capacity_kwh * cfg.reserve_pct / 100) ? 'Satisfied ✓' : 'Violated ✗'}`});
+
+  if(step.selected_charger && sel){
+    rows.push({l: "Selected Charging Station", v: `${sel.charger} (Global minimum complete route distance)`});
+    rows.push({l: "Journey to Charger", v: `${sel.dist_to_charger_km.toFixed(2)} km · Needs ${sel.energy_to_charger_kwh.toFixed(2)} kWh · Arrives with ${sel.battery_at_charger_pct.toFixed(1)}% (${sel.battery_at_charger_kwh.toFixed(2)} kWh)`});
+    rows.push({l: "Battery After Recharge", v: `Replenished to 100.0% (${sel.battery_after_charge_kwh.toFixed(2)} kWh) · Added ${sel.energy_added_kwh.toFixed(2)} kWh`});
+    rows.push({l: "Continuation from Charger", v: `${sel.dist_from_charger_km.toFixed(2)} km to ${sel.next_destination} · Arrives with ${sel.battery_at_destination_pct.toFixed(1)}% (${sel.battery_at_destination_kwh.toFixed(2)} kWh)`});
+    rows.push({l: "Effect on Route Distance", v: `+${sel.detour_increase_km.toFixed(2)} km detour (Total via ${sel.charger}: ${sel.total_via_km.toFixed(2)} km vs Direct: ${sel.direct_dist_km.toFixed(2)} km)`});
+    rows.push({l: "Exact Selection Rationale", v: sel.explanation});
+  } else {
+    rows.push({l: "Charging Required?", v: "NO — Direct travel approved (Battery safely exceeds threshold)"});
+    rows.push({l: "Effect on Route Distance", v: "+0.00 km (Optimal direct shortest path maintained)"});
+    if(step.from === "Grocery" || (step.target_destination === "Hub")){
+      rows.push({l: "Road Path Notice", v: "Physical street route passes through road intersection CH-1 as a transit waypoint only. No charging stop is scheduled or required."});
+    }
+  }
+
+  $("bdBody").innerHTML = rows.map(r => `
+    <div class="bd-row">
+      <span class="bd-l">${esc(r.l)}</span>
+      <span class="bd-v" style="max-width:58%">${esc(String(r.v))}</span>
+    </div>
+  `).join("") + candTableHtml;
+}
+
+function hideBdCard(){ $("bdCard").classList.add("hidden"); }
+
+/* ── Explanation Steps Synchronization ────────────────────────── */
+function renderExpStep(){
+  if(!result || !result.steps || !result.steps.length) return;
+  const s = result.steps[expIdx];
+  $("stepTitle").textContent   = `${expIdx + 1}. ${s.title}`;
+  $("stepText").textContent    = s.detail;
+  $("stepFormula").textContent = s.formula;
+  $("stepCount").textContent   = `Step ${expIdx + 1} of ${result.steps.length}`;
+  $("prevStep").disabled    = expIdx === 0;
+  $("nextStepExp").disabled = expIdx === result.steps.length - 1;
+
+  $("timeline").innerHTML = result.steps.slice(0, expIdx + 1).map((e, i) => {
+    const cl = i < expIdx ? "g" : "a";
+    return `<div class="event">
+      <div class="num ${cl}">${String(i + 1).padStart(2, "0")}</div>
+      <div>
+        <p>${esc(e.title)}</p>
+        <small>${i === expIdx ? "▶ Active step" : "✓ Completed"}</small>
+      </div>
+    </div>`;
+  }).join("");
+  $("timeline").scrollTop = $("timeline").scrollHeight;
+}
+
+function syncExpToSim(){
+  if(!result || !result.steps) return;
+  const total = result.steps.length;
+  const simLen = simSteps.length || 1;
+  expIdx = Math.min(Math.floor(simIdx / simLen * total), total - 1);
+  renderExpStep();
+}
+
+/* ── Branch & Bound Tree Visualizer ───────────────────────────── */
+function renderTree(){
+  if(!result) return;
+  const nodes = result.search_tree || [];
+  if(!nodes.length){ $("treeReadout").textContent = "No search tree data."; return; }
+
+  const maxD = Math.max(...nodes.map(n => n.depth), 1);
+  const byD  = {};
+  nodes.forEach(n => (byD[n.depth] ??= []).push(n));
+
+  const W  = Math.max(900, ...Object.values(byD).map(a => a.length * 150));
+  const H  = (maxD + 1) * 90 + 20;
+  const pos = {};
+
+  Object.keys(byD).forEach(d =>
+    byD[d].forEach((n, i) =>
+      pos[n.id] = { x: (i + 1) * W / (byD[d].length + 1), y: 35 + (+d) * 85 }));
+
+  let s = `<svg id="treeSvg" class="tree-svg" viewBox="0 0 ${W} ${H}" style="min-width:${W}px">`;
+  nodes.filter(n => n.parent !== null).forEach(n => {
+    const a = pos[n.parent], b = pos[n.id];
+    if(a && b) s += `<line class="tree-edge" x1="${a.x}" y1="${a.y + 21}" x2="${b.x}" y2="${b.y - 21}"/>`;
+  });
+  nodes.forEach(n => {
+    const p = pos[n.id], cl = n.status;
+    const lb = n.label.length > 22 ? n.label.slice(0, 20) + "…" : n.label;
+    s += `<g class="tree-node ${cl}" data-tree="${n.id}" transform="translate(${p.x - 58},${p.y - 21})" style="cursor:pointer">
+      <rect width="116" height="44" rx="8"/>
+      <text x="58" y="17">${esc(lb)}</text>
+      <text class="bnd" x="58" y="34">LB ${Number(n.bound).toFixed(2)} km</text>
+    </g>`;
+  });
+  s += "</svg>";
+  $("treeSvg").outerHTML = s;
+
+  document.querySelectorAll("[data-tree]").forEach(el =>
+    el.addEventListener("click", () => {
+      const n = nodes.find(x => x.id === +el.dataset.tree);
+      if(n) $("treeReadout").textContent =
+        `Node ${n.id}: ${n.label} · Cost: ${n.cost} km · Lower Bound: ${n.bound} km · Status: ${n.status}`;
+    }));
+
+  $("treeReadout").textContent =
+    `${nodes.length} nodes · ${result.explored_states} expanded · ${result.pruned_states} pruned · Click a node to view state bounds`;
+}
+
+/* ── Charging Timeline ────────────────────────────────────────── */
+function renderCharging(){
+  if(!result) return;
+  const cfg = result.config, m = result.metrics;
+  const evts = result.charging_events || [];
+
+  if(!result.feasible){
+    $("chargingSummary").textContent = result.infeasibility_reason || "Infeasible.";
+    $("chargingSummary").className   = "notice err";
+    return;
+  }
+
+  const nCh = evts.filter(e => e.type === "charge").length;
+  const remPct = (m.remaining_kwh / cfg.capacity_kwh * 100);
+  $("chargingSummary").textContent =
+    `Feasible schedule. Charging stops: ${nCh} · Charging duration: ${m.charge_min.toFixed(1)} min · ` +
+    `Battery at Hub: ${remPct.toFixed(1)}% · ` +
+    (m.within_budget ? "Distance budget respected ✓" : "⚠ Exceeds distance budget.");
+  $("chargingSummary").className = m.within_budget ? "notice ok" : "notice";
+
+  $("socBar").style.width  = cfg.soc_pct + "%";
+  $("socLabel").textContent =
+    `Start: ${cfg.soc_pct}% (${(cfg.capacity_kwh * cfg.soc_pct / 100).toFixed(2)} kWh) · ` +
+    `Threshold: ${cfg.threshold_pct}% · Safety reserve: ${cfg.reserve_pct}%`;
+
+  $("chargingRows").innerHTML = evts.map((e, i) => {
+    const tc = e.type === "charge" ? "warn"
+             : e.type === "travel_to_charger" ? "warn"
+             : e.type === "delivery" || e.type === "finish" ? "good" : "";
+    const dc = e.distance_km != null
+      ? e.distance_km.toFixed(2) + " km"
+      : e.added_kwh != null
+        ? "+" + e.added_kwh.toFixed(2) + " kWh (" + (e.charge_minutes || 0).toFixed(1) + " min)"
+        : "—";
+    const bb = e.battery_before != null
+      ? e.battery_before.toFixed(2) + " kWh (" + (e.soc_before ?? 0).toFixed(1) + "%)" : "—";
+    const ba = e.battery_after != null
+      ? e.battery_after.toFixed(2) + " kWh (" + (e.soc_after ?? 0).toFixed(1) + "%)" : "—";
+    const fr = (e.from || "") + " → " + (e.to || e.station || "");
+    return `<tr>
+      <td>${i + 1}</td>
+      <td class="${tc}">${esc(e.type.replace(/_/g, " "))}</td>
+      <td>${esc(fr)}</td><td>${esc(dc)}</td><td>${esc(bb)}</td><td>${esc(ba)}</td>
+    </tr>`;
+  }).join("") || '<tr><td colspan="6">No events.</td></tr>';
+}
+
+/* ── Battery Decisions Sidebar ────────────────────────────────── */
+function renderDecisions(){
+  if(!result || !result.simulation_steps) return;
+  const decs = result.simulation_steps.filter(s => s.type === "battery_decision");
+  if(!decs.length){
+    $("decisionRows").innerHTML =
+      `<p style="color:var(--muted);font-size:11px">
+         Battery remained strictly above threshold throughout the delivery route.</p>`;
+    return;
+  }
+  $("decisionRows").innerHTML = decs.map(s => {
+    const dec = s.battery_decision || {};
+    const pct = s.battery_pct ?? 0;
+    return `<div class="bd-card" style="margin-bottom:8px">
+      <h5>⚡ ${esc(s.title)}</h5>
+      <div class="bd-row"><span class="bd-l">Location</span><span class="bd-v">${esc(s.from || "—")}</span></div>
+      <div class="bd-row"><span class="bd-l">Battery</span><span class="bd-v">${pct.toFixed(1)}%</span></div>
+      <div class="bd-row"><span class="bd-l">Threshold</span><span class="bd-v">${result.config.threshold_pct}%</span></div>
+      <div class="bd-row"><span class="bd-l">Status</span><span class="bd-v">${esc(dec.status_label || "")}</span></div>
+      <div class="bd-row" style="flex-direction:column;gap:3px;margin-top:4px">
+        <span class="bd-l">Selected Charger</span>
+        <span style="font-size:11px;color:var(--teal);font-weight:700">${esc(s.selected_charger || "—")}</span>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+/* ── Full Reset ───────────────────────────────────────────────── */
+function fullReset(){
+  stopAll();
+  result = null; simSteps = []; simIdx = 0; expIdx = 0;
+  ["mDistance", "mEnergy", "mOrders", "mTime", "mStates"].forEach(id => $(id).textContent = "—");
+  $("mapStatus").textContent   = "Waiting for input";
+  $("stepTitle").textContent   = "Ready to optimize";
+  $("stepText").textContent    = "Configure vehicle constraints and click Run Optimization. Simulation runs on demand.";
+  $("stepFormula").textContent = "Waiting for optimization…";
+  $("timeline").innerHTML      = "";
+  $("stepCount").textContent   = "Step 0 of 0";
+  $("stepProg").textContent    = "Step 0 of 0";
+  $("animStatus").textContent  = "Run optimization first";
+  $("prevStep").disabled       = true;
+  $("nextStepExp").disabled    = true;
+  hideBdCard();
+  setCtrlState("idle");
+  setBattBar(+$("soc").value || 75);
+  resetMap();
+  $("decisionRows").innerHTML  = `<p style="color:var(--muted);font-size:11px">Run optimization to view battery decisions.</p>`;
+  $("chargingRows").innerHTML  = '<tr><td colspan="6">No data yet.</td></tr>';
+  $("chargingSummary").textContent = "Run optimization to calculate charging schedule.";
+  $("chargingSummary").className   = "notice";
+  $("stopBadges").innerHTML    = "";
+  showTab("simulation");
+}
+
+/* ── Tab Switching ────────────────────────────────────────────── */
+function showTab(name){
+  document.querySelectorAll(".tab").forEach(b =>
+    b.classList.toggle("active", b.dataset.tab === name));
+  ["simulation", "tree", "charging", "theory"].forEach(x =>
+    $(x + "Panel").classList.toggle("hidden", x !== name));
+}
+
+/* ── Event Wiring ─────────────────────────────────────────────── */
+document.querySelectorAll(".tab").forEach(b =>
+  b.addEventListener("click", () => showTab(b.dataset.tab)));
+
+$("runBtn").addEventListener("click",   runOptimize);
+$("resetBtn").addEventListener("click", fullReset);
+
+$("btnPlay").addEventListener("click",    startSim);
+$("btnPause").addEventListener("click",   pauseSim);
+$("btnResume").addEventListener("click",  resumeSim);
+$("btnRestart").addEventListener("click", restartSim);
+$("btnNext").addEventListener("click",    nextStepManual);
+
+document.querySelectorAll(".spd").forEach(b =>
+  b.addEventListener("click", () => {
+    curSpeed = b.dataset.spd;
+    document.querySelectorAll(".spd").forEach(x =>
+      x.classList.toggle("active", x.dataset.spd === curSpeed));
+  }));
+
+$("nextStepExp").addEventListener("click", () => {
+  if(result && expIdx < result.steps.length - 1){ expIdx++; renderExpStep(); }
+});
+$("prevStep").addEventListener("click", () => {
+  if(result && expIdx > 0){ expIdx--; renderExpStep(); }
+});
+
+$("selectAll").addEventListener("click", () =>
+  document.querySelectorAll("[data-order]").forEach(x => x.checked = true));
+$("clearAll").addEventListener("click", () =>
+  document.querySelectorAll("[data-order]").forEach(x => x.checked = false));
+
+// Node hover / tooltip interaction
+document.querySelectorAll("#mapNodes [data-node]").forEach(el => {
+  el.addEventListener("mouseenter", () => {
+    const nodeName = el.dataset.node;
+    const titleEl = el.querySelector("title");
+    if(titleEl && result){
+      $("mapStatus").textContent = `${nodeName} · ${titleEl.textContent}`;
+    }
+  });
+  el.addEventListener("mouseleave", () => {
+    if(result && result.feasible){
+      $("mapStatus").textContent = result.metrics.within_budget ? "Optimal Plan Ready ✓" : "⚠ Exceeds Budget";
+    }
+  });
+});
+
+/* ── Bootstrap ────────────────────────────────────────────────── */
+init();
+</script>
+</body>
+</html>
