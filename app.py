@@ -1,21 +1,53 @@
 """
 VoltRoute — Optimal Delivery and Charging Planning for EV-Based Delivery Partners
-Flask backend: Exact Branch & Bound route optimizer with Dijkstra road-network
-routing, battery-threshold-aware charging decisions, and verifiable global optimality.
+Flask backend: User-Configurable Road Network, Dijkstra Shortest Paths, Two-Stage Simulation
+(Stage 1: Unoptimized Baseline Route; Stage 2: Branch & Bound Battery-Aware Route),
+and Verifiable Route Comparison.
 """
 
 from flask import Flask, render_template, request, jsonify
-from math import hypot, ceil, factorial
+from math import hypot, ceil, factorial, cos, sin, pi
 from itertools import count, permutations
 import heapq
 
 app = Flask(__name__)
 
 # ---------------------------------------------------------------------------
-# Illustrative city network & graph definition
+# Default Sample Network Definition
 # ---------------------------------------------------------------------------
-KM_PER_PIXEL = 0.075
+DEFAULT_SAMPLE_NETWORK = {
+    "start_node": {"id": "Depot", "name": "Main Depot", "x": 70, "y": 265},
+    "end_node": {"id": "Hub", "name": "Return Hub", "x": 635, "y": 245},
+    "delivery_nodes": [
+        {"id": "Pharmacy", "name": "Pharmacy", "desc": "Medical Supplies", "x": 145, "y": 85},
+        {"id": "Office", "name": "Office", "desc": "Corporate Documents", "x": 225, "y": 185},
+        {"id": "Grocery", "name": "Grocery", "desc": "Fresh Produce", "x": 340, "y": 275},
+    ],
+    "charging_stations": [
+        {"id": "CH-1", "name": "CH-1 Station", "rate_kw": 22.0, "cost_per_kwh": 0.20, "x": 445, "y": 165},
+        {"id": "CH-2", "name": "CH-2 Station", "rate_kw": 22.0, "cost_per_kwh": 0.20, "x": 300, "y": 70},
+        {"id": "CH-3", "name": "CH-3 Fast", "rate_kw": 50.0, "cost_per_kwh": 0.35, "x": 510, "y": 75},
+    ],
+    "roads": [
+        {"from": "Depot", "to": "Pharmacy", "distance_km": 14.825, "bidirectional": True},
+        {"from": "Pharmacy", "to": "Office", "distance_km": 9.618, "bidirectional": True},
+        {"from": "Office", "to": "Grocery", "distance_km": 11.026, "bidirectional": True},
+        {"from": "Grocery", "to": "CH-1", "distance_km": 12.042, "bidirectional": True},
+        {"from": "CH-1", "to": "Hub", "distance_km": 14.825, "bidirectional": True},
+        {"from": "Depot", "to": "Office", "distance_km": 13.064, "bidirectional": True},
+        {"from": "Office", "to": "CH-2", "distance_km": 10.308, "bidirectional": True},
+        {"from": "CH-2", "to": "Pharmacy", "distance_km": 11.673, "bidirectional": True},
+        {"from": "CH-2", "to": "CH-3", "distance_km": 15.754, "bidirectional": True},
+        {"from": "CH-3", "to": "Hub", "distance_km": 15.828, "bidirectional": True},
+        {"from": "Grocery", "to": "CH-3", "distance_km": 19.686, "bidirectional": True},
+        {"from": "CH-3", "to": "CH-1", "distance_km": 8.246, "bidirectional": True},
+        {"from": "Pharmacy", "to": "Grocery", "distance_km": 20.408, "bidirectional": True},
+        {"from": "Office", "to": "CH-1", "distance_km": 16.576, "bidirectional": True},
+        {"from": "Depot", "to": "CH-2", "distance_km": 22.569, "bidirectional": True},
+    ]
+}
 
+# Backward compatibility dictionaries & structures for existing tests
 NODES = {
     "Depot":    {"x":  70, "y": 265, "kind": "depot",    "name": "Depot"},
     "Pharmacy": {"x": 145, "y":  85, "kind": "delivery", "name": "Pharmacy", "order_id": "A"},
@@ -38,7 +70,6 @@ ORDERS = {
 
 CHARGERS = ["CH-1", "CH-2", "CH-3"]
 
-# Road network edges corresponding to the simulated street map
 ROAD_EDGES = [
     ("Depot", "Pharmacy"),
     ("Pharmacy", "Office"),
@@ -58,34 +89,250 @@ ROAD_EDGES = [
 ]
 
 
-def edge_euclidean_distance(u: str, v: str) -> float:
-    """Straight-line road distance (km) between two adjacent nodes."""
-    pu, pv = NODES[u], NODES[v]
-    return round(hypot(pu["x"] - pv["x"], pu["y"] - pv["y"]) * KM_PER_PIXEL, 3)
-
-
-# Build adjacency map with edge weights
-ROAD_ADJ = {k: {} for k in NODES}
-for _u, _v in ROAD_EDGES:
-    _d = edge_euclidean_distance(_u, _v)
-    ROAD_ADJ[_u][_v] = _d
-    ROAD_ADJ[_v][_u] = _d
-
-
 # ---------------------------------------------------------------------------
-# Dijkstra's Algorithm for Shortest Paths on Road Network
+# Network Graph Builder & Dijkstra Engine
 # ---------------------------------------------------------------------------
 
-def dijkstra(start: str, end: str) -> tuple[float, list[str]]:
+def compute_schematic_layout(start_id: str, end_id: str, delivery_ids: list, charger_ids: list) -> dict:
     """
-    Dijkstra's shortest path algorithm for non-negative road edge distances.
-    Returns (shortest_distance_km, list_of_vertex_names).
+    Computes an aesthetic, collision-free coordinate layout on a 740x360 SVG canvas
+    for any user-configured network.
     """
+    coords = {}
+    is_round_trip = (start_id == end_id)
+
+    # Start position
+    coords[start_id] = {"x": 75, "y": 255}
+
+    # End position
+    if is_round_trip:
+        pass
+    else:
+        coords[end_id] = {"x": 665, "y": 255}
+
+    # Deliveries positioned in central columns
+    n_del = len(delivery_ids)
+    if n_del == 1:
+        coords[delivery_ids[0]] = {"x": 370, "y": 170}
+    else:
+        left_x = 180
+        right_x = 560
+        span_x = (right_x - left_x) / max(1, n_del - 1)
+        for i, d_id in enumerate(delivery_ids):
+            x = int(left_x + i * span_x)
+            # Alternate vertical bands
+            if i % 3 == 0:
+                y = 90
+            elif i % 3 == 1:
+                y = 200
+            else:
+                y = 290
+            coords[d_id] = {"x": x, "y": y}
+
+    # Chargers positioned in upper and middle strategic corridors
+    n_ch = len(charger_ids)
+    if n_ch == 1:
+        coords[charger_ids[0]] = {"x": 370, "y": 80}
+    elif n_ch == 2:
+        coords[charger_ids[0]] = {"x": 290, "y": 70}
+        coords[charger_ids[1]] = {"x": 480, "y": 80}
+    else:
+        ch_xs = [300, 480, 400, 240, 530]
+        ch_ys = [70, 75, 170, 270, 180]
+        for i, c_id in enumerate(charger_ids):
+            coords[c_id] = {
+                "x": ch_xs[i % len(ch_xs)],
+                "y": ch_ys[i % len(ch_ys)]
+            }
+
+    return coords
+
+
+def validate_network_spec(spec: dict) -> dict:
+    """
+    Validates a complete user-defined network specification.
+    Returns: {"valid": bool, "errors": list[str], "warnings": list[str], "normalized": dict}
+    """
+    errors = []
+    warnings = []
+
+    if not isinstance(spec, dict):
+        return {"valid": False, "errors": ["Network specification must be a JSON object."], "warnings": []}
+
+    start_node = spec.get("start_node") or {}
+    end_node = spec.get("end_node") or {}
+    delivery_nodes = spec.get("delivery_nodes") or []
+    charging_stations = spec.get("charging_stations") or []
+    roads = spec.get("roads") or []
+
+    start_id = str(start_node.get("id", "Depot")).strip()
+    end_id = str(end_node.get("id", "Hub")).strip()
+
+    if not start_id:
+        errors.append("Start node ID cannot be empty.")
+    if not end_id:
+        errors.append("End node ID cannot be empty.")
+
+    if not delivery_nodes or len(delivery_nodes) < 1:
+        errors.append("At least 1 delivery location is required.")
+    elif len(delivery_nodes) > 10:
+        errors.append("Maximum 10 delivery locations allowed for exact optimization.")
+
+    all_node_ids = set()
+    node_id_counts = {}
+
+    def track_id(nid, category):
+        if not nid:
+            errors.append(f"A {category} has an empty ID.")
+            return
+        node_id_counts[nid] = node_id_counts.get(nid, 0) + 1
+        all_node_ids.add(nid)
+
+    track_id(start_id, "start node")
+    if end_id != start_id:
+        track_id(end_id, "end node")
+
+    del_ids = []
+    for idx, d in enumerate(delivery_nodes):
+        did = str(d.get("id", f"D{idx+1}")).strip()
+        if not did:
+            errors.append(f"Delivery node #{idx+1} has an empty ID.")
+            continue
+        del_ids.append(did)
+        track_id(did, "delivery node")
+
+    ch_ids = []
+    for idx, c in enumerate(charging_stations):
+        cid = str(c.get("id", f"C{idx+1}")).strip()
+        if not cid:
+            errors.append(f"Charging station #{idx+1} has an empty ID.")
+            continue
+        ch_ids.append(cid)
+        track_id(cid, "charging station")
+        rate = float(c.get("rate_kw", 22.0))
+        if rate <= 0 or rate > 350:
+            errors.append(f"Charging station '{cid}' has an invalid rate ({rate} kW). Must be 1–350 kW.")
+
+    # Check for duplicate IDs
+    for nid, count_val in node_id_counts.items():
+        if count_val > 1:
+            errors.append(f"Duplicate node ID detected: '{nid}'. All node IDs must be unique.")
+
+    if errors:
+        return {"valid": False, "errors": errors, "warnings": warnings}
+
+    # Validate roads
+    if not roads or len(roads) < 1:
+        errors.append("The network must have at least one road connection.")
+
+    adj = {nid: {} for nid in all_node_ids}
+    normalized_roads = []
+    for idx, r in enumerate(roads):
+        u = str(r.get("from", "")).strip()
+        v = str(r.get("to", "")).strip()
+        try:
+            dist = float(r.get("distance_km", 0.0))
+        except (ValueError, TypeError):
+            dist = 0.0
+
+        bidi = bool(r.get("bidirectional", True))
+
+        if u not in all_node_ids:
+            errors.append(f"Road #{idx+1} refers to unknown source node '{u}'.")
+        if v not in all_node_ids:
+            errors.append(f"Road #{idx+1} refers to unknown destination node '{v}'.")
+        if u == v:
+            errors.append(f"Road #{idx+1} has identical source and destination '{u}' (self-loop not permitted).")
+        if dist <= 0:
+            errors.append(f"Road #{idx+1} ({u} → {v}) must have positive distance > 0 km (received {dist}).")
+
+        if u in all_node_ids and v in all_node_ids and dist > 0 and u != v:
+            # Add edge
+            adj[u][v] = min(adj[u].get(v, float("inf")), round(dist, 3))
+            if bidi:
+                adj[v][u] = min(adj[v].get(u, float("inf")), round(dist, 3))
+            normalized_roads.append({
+                "from": u, "to": v, "distance_km": round(dist, 3), "bidirectional": bidi
+            })
+
+    if errors:
+        return {"valid": False, "errors": errors, "warnings": warnings}
+
+    # Graph reachability check using Dijkstra
+    for d_id in del_ids:
+        dist_val, _ = dijkstra_on_adj(adj, start_id, d_id)
+        if dist_val == float("inf"):
+            errors.append(f"Delivery node '{d_id}' is unreachable from start node '{start_id}'.")
+        dist_to_end, _ = dijkstra_on_adj(adj, d_id, end_id)
+        if dist_to_end == float("inf"):
+            errors.append(f"End node '{end_id}' is unreachable from delivery node '{d_id}'.")
+
+    # Layout coordinates
+    layout_defaults = compute_schematic_layout(start_id, end_id, del_ids, ch_ids)
+
+    norm_start = {
+        "id": start_id,
+        "name": str(start_node.get("name", "Main Depot")),
+        "kind": "depot",
+        "x": int(start_node.get("x", layout_defaults[start_id]["x"])),
+        "y": int(start_node.get("y", layout_defaults[start_id]["y"])),
+    }
+    norm_end = {
+        "id": end_id,
+        "name": str(end_node.get("name", "Return Hub")),
+        "kind": "hub",
+        "x": int(end_node.get("x", layout_defaults[end_id]["x"] if end_id in layout_defaults else 665)),
+        "y": int(end_node.get("y", layout_defaults[end_id]["y"] if end_id in layout_defaults else 255)),
+    }
+    norm_del = []
+    for d in delivery_nodes:
+        did = str(d.get("id")).strip()
+        norm_del.append({
+            "id": did,
+            "name": str(d.get("name", did)),
+            "desc": str(d.get("desc", "")),
+            "kind": "delivery",
+            "x": int(d.get("x", layout_defaults.get(did, {}).get("x", 370))),
+            "y": int(d.get("y", layout_defaults.get(did, {}).get("y", 180))),
+        })
+    norm_ch = []
+    for c in charging_stations:
+        cid = str(c.get("id")).strip()
+        norm_ch.append({
+            "id": cid,
+            "name": str(c.get("name", cid)),
+            "rate_kw": float(c.get("rate_kw", 22.0)),
+            "cost_per_kwh": float(c.get("cost_per_kwh", 0.20)),
+            "kind": "charger",
+            "x": int(c.get("x", layout_defaults.get(cid, {}).get("x", 370))),
+            "y": int(c.get("y", layout_defaults.get(cid, {}).get("y", 80))),
+        })
+
+    normalized = {
+        "start_node": norm_start,
+        "end_node": norm_end,
+        "delivery_nodes": norm_del,
+        "charging_stations": norm_ch,
+        "roads": normalized_roads,
+    }
+
+    return {
+        "valid": len(errors) == 0,
+        "errors": errors,
+        "warnings": warnings,
+        "normalized": normalized
+    }
+
+
+def dijkstra_on_adj(adj: dict, start: str, end: str) -> tuple[float, list[str]]:
+    """Dijkstra shortest path on an arbitrary adjacency dict."""
     if start == end:
         return 0.0, [start]
+    if start not in adj or end not in adj:
+        return float("inf"), []
 
-    dist = {k: float("inf") for k in NODES}
-    prev = {k: None for k in NODES}
+    dist = {k: float("inf") for k in adj}
+    prev = {k: None for k in adj}
     dist[start] = 0.0
     pq = [(0.0, start)]
 
@@ -95,11 +342,14 @@ def dijkstra(start: str, end: str) -> tuple[float, list[str]]:
             continue
         if u == end:
             break
-        for v, w in ROAD_ADJ[u].items():
+        for v, w in adj[u].items():
             if dist[u] + w < dist[v]:
                 dist[v] = dist[u] + w
                 prev[v] = u
                 heapq.heappush(pq, (dist[v], v))
+
+    if dist[end] == float("inf"):
+        return float("inf"), []
 
     path = []
     curr = end
@@ -110,71 +360,107 @@ def dijkstra(start: str, end: str) -> tuple[float, list[str]]:
     return round(dist[end], 3), path
 
 
-# Precompute all-pairs shortest paths for fast lookups
-_ALL_SHORTEST_DIST = {}
-_ALL_SHORTEST_PATH = {}
-for _n1 in NODES:
-    for _n2 in NODES:
-        _d, _p = dijkstra(_n1, _n2)
-        _ALL_SHORTEST_DIST[(_n1, _n2)] = _d
-        _ALL_SHORTEST_PATH[(_n1, _n2)] = _p
+class NetworkGraph:
+    """Holds a validated network specification, adjacency graph, and all-pairs shortest paths."""
+    def __init__(self, spec: dict):
+        val = validate_network_spec(spec)
+        if not val["valid"]:
+            raise ValueError("; ".join(val["errors"]))
+        self.spec = val["normalized"]
+        self.start_id = self.spec["start_node"]["id"]
+        self.end_id = self.spec["end_node"]["id"]
+        self.delivery_ids = [d["id"] for d in self.spec["delivery_nodes"]]
+        self.charger_ids = [c["id"] for c in self.spec["charging_stations"]]
+        self.chargers_dict = {c["id"]: c for c in self.spec["charging_stations"]}
+        self.deliveries_dict = {d["id"]: d for d in self.spec["delivery_nodes"]}
 
+        # All node IDs
+        self.all_nodes = {
+            self.start_id: self.spec["start_node"],
+            self.end_id: self.spec["end_node"],
+            **{d["id"]: d for d in self.spec["delivery_nodes"]},
+            **{c["id"]: c for c in self.spec["charging_stations"]},
+        }
+
+        # Build adjacency
+        self.adj = {nid: {} for nid in self.all_nodes}
+        for road in self.spec["roads"]:
+            u, v = road["from"], road["to"]
+            d = road["distance_km"]
+            self.adj[u][v] = min(self.adj[u].get(v, float("inf")), d)
+            if road["bidirectional"]:
+                self.adj[v][u] = min(self.adj[v].get(u, float("inf")), d)
+
+        # Precompute all-pairs shortest paths
+        self.dist_matrix = {}
+        self.path_matrix = {}
+        for u in self.all_nodes:
+            for v in self.all_nodes:
+                d, p = dijkstra_on_adj(self.adj, u, v)
+                self.dist_matrix[(u, v)] = d
+                self.path_matrix[(u, v)] = p
+
+    def distance(self, u: str, v: str) -> float:
+        return self.dist_matrix.get((u, v), float("inf"))
+
+    def shortest_path(self, u: str, v: str) -> list[str]:
+        return self.path_matrix.get((u, v), [u, v])
+
+
+# Global default graph instance for backward compatibility
+_DEFAULT_GRAPH = NetworkGraph(DEFAULT_SAMPLE_NETWORK)
+
+def dijkstra(start: str, end: str) -> tuple[float, list[str]]:
+    return _DEFAULT_GRAPH.distance(start, end), _DEFAULT_GRAPH.shortest_path(start, end)
 
 def shortest_distance(a: str, b: str) -> float:
-    """Shortest road distance (km) between nodes a and b using Dijkstra."""
-    return _ALL_SHORTEST_DIST.get((a, b), dijkstra(a, b)[0])
-
+    return _DEFAULT_GRAPH.distance(a, b)
 
 def shortest_path(a: str, b: str) -> list[str]:
-    """Sequence of road vertices on the Dijkstra shortest path between a and b."""
-    return _ALL_SHORTEST_PATH.get((a, b), dijkstra(a, b)[1])
-
+    return _DEFAULT_GRAPH.shortest_path(a, b)
 
 def distance(a: str, b: str) -> float:
-    """Road distance between two named nodes (computed via Dijkstra)."""
-    return shortest_distance(a, b)
-
-
-def route_distance(route: list) -> float:
-    """Total road distance for Depot → *route → Hub."""
-    seq = ["Depot"] + route + ["Hub"]
-    return round(sum(distance(seq[i], seq[i + 1]) for i in range(len(seq) - 1)), 3)
+    return _DEFAULT_GRAPH.distance(a, b)
 
 
 # ---------------------------------------------------------------------------
 # Minimum Spanning Tree (MST) Lower Bound (Prim's Algorithm)
 # ---------------------------------------------------------------------------
 
-def mst_cost(nodes: list) -> float:
+def mst_cost(nodes: list, dist_fn=None) -> float:
     """Minimum spanning tree cost over a set of node names using Prim's algorithm."""
+    if dist_fn is None:
+        dist_fn = distance
     if len(nodes) <= 1:
         return 0.0
     remaining = set(nodes)
     first = next(iter(remaining))
     remaining.remove(first)
-    best = {node: distance(first, node) for node in remaining}
+    best = {node: dist_fn(first, node) for node in remaining}
     total = 0.0
     while remaining:
         node = min(remaining, key=lambda n: best[n])
         total += best[node]
         remaining.remove(node)
         for other in remaining:
-            best[other] = min(best[other], distance(node, other))
+            best[other] = min(best[other], dist_fn(node, other))
     return round(total, 3)
 
 
-def lower_bound(current: str, remaining: list, end: str = "Hub") -> float:
+def lower_bound(current: str, remaining: list, end: str = "Hub", dist_fn=None) -> float:
     """
     Admissible B&B lower bound for remaining deliveries.
     LB = min(current→remaining) + MST(remaining) + min(remaining→end)
     Never overestimates the true completion distance.
     """
+    if dist_fn is None:
+        dist_fn = distance
     if not remaining:
-        return distance(current, end)
+        return dist_fn(current, end)
     return round(
-        min(distance(current, node) for node in remaining)
-        + mst_cost(remaining)
-        + min(distance(node, end) for node in remaining),
+        min(dist_fn(current, node) for node in remaining)
+        + mst_cost(remaining, dist_fn)
+        + min(dist_fn(node, end) for node in remaining),
         3
     )
 
@@ -193,9 +479,17 @@ def soc_pct(battery_kwh: float, capacity_kwh: float) -> float:
     return round(battery_kwh / capacity_kwh * 100.0, 1)
 
 
-def evaluate_battery_decision(battery_kwh: float, capacity_kwh: float,
-                              threshold_pct: float, reserve_pct: float,
-                              cur: str, nxt: str, eff: float) -> dict:
+def evaluate_battery_decision(
+    battery_kwh: float,
+    capacity_kwh: float,
+    threshold_pct: float,
+    reserve_pct: float,
+    cur: str,
+    nxt: str,
+    eff: float,
+    chargers: list = None,
+    dist_fn = None
+) -> dict:
     """
     Evaluates battery feasibility for traveling from `cur` to `nxt`.
     Distinguishes:
@@ -204,9 +498,14 @@ def evaluate_battery_decision(battery_kwh: float, capacity_kwh: float,
       - 'below_threshold': projected battery falls below threshold T (but >= reserve R)
       - 'insufficient': projected battery falls below safety reserve R
     """
+    if chargers is None:
+        chargers = CHARGERS
+    if dist_fn is None:
+        dist_fn = distance
+
     threshold_kwh = capacity_kwh * threshold_pct / 100.0
     reserve_kwh = capacity_kwh * reserve_pct / 100.0
-    leg_dist = distance(cur, nxt)
+    leg_dist = dist_fn(cur, nxt)
     needed_kwh = energy_for_leg(leg_dist, eff)
     projected = battery_kwh - needed_kwh
     projected_soc = soc_pct(projected, capacity_kwh)
@@ -255,134 +554,386 @@ def evaluate_battery_decision(battery_kwh: float, capacity_kwh: float,
 
     # Evaluate candidate chargers
     charger_evaluations = []
-    for ch in CHARGERS:
+    for ch in chargers:
         if ch == cur:
             continue
-        dist_to_ch = distance(cur, ch)
+        dist_to_ch = dist_fn(cur, ch)
+        if dist_to_ch == float("inf"):
+            continue
         e_to_ch = energy_for_leg(dist_to_ch, eff)
         bat_at_ch = battery_kwh - e_to_ch
         reachable = (bat_at_ch >= reserve_kwh - 1e-9)
 
-        dist_from_ch = distance(ch, nxt)
-        e_from_ch = energy_for_leg(dist_from_ch, eff)
-        # Charging up to capacity at station
+        dist_from_ch = dist_fn(ch, nxt)
+        e_from_ch = energy_for_leg(dist_from_ch, eff) if dist_from_ch != float("inf") else float("inf")
         add_kwh = max(0.0, capacity_kwh - bat_at_ch) if reachable else 0.0
-        bat_at_nxt = capacity_kwh - e_from_ch
-        continuation_feasible = reachable and (bat_at_nxt >= reserve_kwh - 1e-9)
+        bat_at_nxt = capacity_kwh - e_from_ch if reachable and dist_from_ch != float("inf") else 0.0
+        continuation_feasible = reachable and (dist_from_ch != float("inf")) and (bat_at_nxt >= reserve_kwh - 1e-9)
 
-        total_via = dist_to_ch + dist_from_ch
-        detour_diff = total_via - leg_dist
+        total_via = dist_to_ch + dist_from_ch if dist_from_ch != float("inf") else float("inf")
+        detour_diff = total_via - leg_dist if total_via != float("inf") and leg_dist != float("inf") else 0.0
+
         charger_evaluations.append({
             "name": ch,
             "dist_to_charger_km": round(dist_to_ch, 3),
             "energy_to_charger_kwh": round(e_to_ch, 3),
             "battery_at_charger_kwh": round(bat_at_ch, 4),
             "battery_at_charger_pct": soc_pct(bat_at_ch, capacity_kwh),
-            "reachable": reachable,
             "energy_added_kwh": round(add_kwh, 3),
-            "dist_to_next_km": round(dist_from_ch, 3),
-            "energy_from_charger_kwh": round(e_from_ch, 3),
-            "battery_at_next_kwh": round(bat_at_nxt, 4) if reachable else 0.0,
-            "battery_at_next_pct": soc_pct(bat_at_nxt, capacity_kwh) if reachable else 0.0,
-            "total_detour_dist_km": round(total_via, 3),
-            "detour_increase_km": round(detour_diff, 3),
+            "dist_from_charger_km": round(dist_from_ch, 3) if dist_from_ch != float("inf") else None,
+            "energy_from_charger_kwh": round(e_from_ch, 3) if e_from_ch != float("inf") else None,
+            "battery_at_next_kwh": round(bat_at_nxt, 4) if continuation_feasible else None,
+            "battery_at_next_pct": soc_pct(bat_at_nxt, capacity_kwh) if continuation_feasible else None,
+            "total_route_via_km": round(total_via, 3) if total_via != float("inf") else None,
+            "detour_increase_km": round(detour_diff, 3) if total_via != float("inf") else None,
+            "reachable": reachable,
             "continuation_feasible": continuation_feasible,
             "status_detail": (
-                f"Reachable (arrives with {soc_pct(bat_at_ch, capacity_kwh):.1f}% > {reserve_pct:.0f}% reserve); "
-                f"recharge enables reaching {nxt} with {soc_pct(bat_at_nxt, capacity_kwh):.1f}%; "
-                f"detour effect: +{detour_diff:.2f} km."
-                if continuation_feasible else
-                (f"Unreachable: arrival battery at {ch} ({soc_pct(bat_at_ch, capacity_kwh):.1f}%) violates {reserve_pct:.0f}% reserve constraint."
-                 if not reachable else
-                 f"Cannot reach {nxt} from {ch} even after 100% recharge ({soc_pct(bat_at_nxt, capacity_kwh):.1f}% < {reserve_pct:.0f}% reserve).")
-            ),
+                "Reachable & feasible continuation" if continuation_feasible
+                else "Unreachable (violates safety reserve)" if not reachable
+                else "Cannot reach next destination from charger"
+            )
         })
 
     return {
-        "cur": cur,
-        "nxt": nxt,
+        "status": status,
+        "status_label": status_label,
         "can_proceed_direct": can_proceed,
+        "reason": reason,
         "current_battery_kwh": round(battery_kwh, 4),
         "current_soc_pct": soc_pct(battery_kwh, capacity_kwh),
+        "needed_kwh": round(needed_kwh, 4),
         "projected_battery_kwh": round(projected, 4),
         "projected_soc_pct": projected_soc,
         "threshold_kwh": round(threshold_kwh, 4),
         "threshold_pct": threshold_pct,
         "reserve_kwh": round(reserve_kwh, 4),
         "reserve_pct": reserve_pct,
-        "needed_kwh": round(needed_kwh, 4),
-        "leg_dist_km": round(leg_dist, 3),
-        "status": status,
-        "status_label": status_label,
-        "reason": reason,
         "charger_candidates": charger_evaluations,
     }
 
 
-def battery_decision(battery_kwh: float, capacity_kwh: float,
-                     threshold_pct: float, next_loc: str, current_loc: str,
-                     efficiency: float, reserve_kwh: float) -> dict:
-    """Backwards-compatible wrapper for evaluate_battery_decision."""
-    reserve_pct = (reserve_kwh / capacity_kwh) * 100.0 if capacity_kwh > 0 else 0.0
-    return evaluate_battery_decision(
-        battery_kwh=battery_kwh,
-        capacity_kwh=capacity_kwh,
-        threshold_pct=threshold_pct,
-        reserve_pct=reserve_pct,
-        cur=current_loc,
-        nxt=next_loc,
-        eff=efficiency
-    )
-
-
 # ---------------------------------------------------------------------------
-# Branch & Bound — Joint Delivery Order & Charging Route Optimization
+# Stage 1: Unoptimized Baseline Delivery Route
 # ---------------------------------------------------------------------------
 
-def branch_and_bound_with_charging(order_nodes: list, cfg: dict) -> dict:
+def solve_baseline_route(graph: NetworkGraph, cfg: dict, order_sequence: list = None) -> dict:
     """
-    Branch and Bound algorithm searching for the globally minimum-distance
-    feasible route visiting all delivery locations and ending at Hub,
-    considering battery capacity, safety reserve, and threshold constraints.
-
-    State representation:
-        (lower_bound, serial, current_loc, delivered_orders_mask, cost_so_far,
-         battery_kwh, path, events, tree_node_id)
+    Computes Stage 1: Unoptimized Baseline Delivery Route.
+    Strategy:
+      1. Deliver orders in user-entered sequence D1 → D2 → ... → Dn.
+      2. Follow Dijkstra shortest path between consecutive locations.
+      3. Complete tour at configured end node (Hub).
+      4. If battery falls <= threshold or < reserve, insert the geographically
+         nearest reachable charging station that permits a feasible continuation.
     """
     capacity = cfg["capacity_kwh"]
-    battery0 = capacity * cfg["soc_pct"] / 100.0
-    reserve_pct = cfg["reserve_pct"]
-    reserve_kwh = capacity * reserve_pct / 100.0
-    threshold_pct = cfg["threshold_pct"]
-    threshold_kwh = capacity * threshold_pct / 100.0
+    soc0 = cfg["soc_pct"]
     eff = cfg["km_per_kwh"]
-    rate_kw = cfg["charger_kw"]
+    speed = cfg["average_speed_kmh"]
+    ch_kw = cfg["charger_kw"]
+    reserve_pct = cfg["reserve_pct"]
+    threshold_pct = cfg["threshold_pct"]
 
-    full_orders = frozenset(order_nodes)
+    battery0 = capacity * soc0 / 100.0
 
-    # Bookkeeping for search tree visualization
-    tree = []
-    node_id_gen = count(0)
-    serial_gen = count(0)
+    if order_sequence is None:
+        order_sequence = list(graph.delivery_ids)
 
-    def new_tree_node(parent_id, label, bound, cost, depth):
-        nid = next(node_id_gen)
-        tree.append({
+    cur = graph.start_id
+    bat = battery0
+    cost_acc = 0.0
+    energy_acc = 0.0
+    charge_min_acc = 0.0
+
+    events = []
+    planned = [cur]
+    explanation_steps = []
+
+    # Target sequence: delivery orders then ending hub
+    targets = [(d_id, "delivery") for d_id in order_sequence] + [(graph.end_id, "finish")]
+
+    is_feasible = True
+    infeasibility_reason = ""
+
+    for target_idx, (tgt, target_type) in enumerate(targets):
+        leg_dist = graph.distance(cur, tgt)
+        if leg_dist == float("inf"):
+            is_feasible = False
+            infeasibility_reason = f"No road path exists between {cur} and {tgt} in the configured network."
+            break
+
+        dec = evaluate_battery_decision(
+            battery_kwh=bat,
+            capacity_kwh=capacity,
+            threshold_pct=threshold_pct,
+            reserve_pct=reserve_pct,
+            cur=cur,
+            nxt=tgt,
+            eff=eff,
+            chargers=graph.charger_ids,
+            dist_fn=graph.distance
+        )
+
+        # Baseline Strategy: If can proceed direct without violating threshold, proceed direct
+        if dec["can_proceed_direct"]:
+            e_leg = energy_for_leg(leg_dist, eff)
+            new_bat = bat - e_leg
+            cost_acc += leg_dist
+            energy_acc += e_leg
+
+            events.append({
+                "type": "battery_decision",
+                "from": cur, "to": tgt,
+                "battery_decision": dec,
+                "charger_candidates": dec["charger_candidates"],
+                "selected_charger": None,
+                "battery_before": round(bat, 4),
+                "battery_after": round(new_bat, 4),
+                "soc_before": soc_pct(bat, capacity),
+                "soc_after": soc_pct(new_bat, capacity),
+                "message": (
+                    f"Baseline rule: Direct travel from {cur} to {tgt} ({leg_dist:.2f} km) approved. "
+                    f"Projected battery ({soc_pct(new_bat, capacity):.1f}%) is strictly above {threshold_pct:.0f}% threshold."
+                )
+            })
+
+            ev_type = "delivery" if target_type == "delivery" else "finish"
+            events.append({
+                "type": ev_type,
+                "from": cur, "to": tgt,
+                "distance_km": round(leg_dist, 3),
+                "energy_kwh": round(e_leg, 3),
+                "battery_before": round(bat, 4),
+                "battery_after": round(new_bat, 4),
+                "soc_before": soc_pct(bat, capacity),
+                "soc_after": soc_pct(new_bat, capacity),
+                "message": f"Traveled {cur} → {tgt} ({leg_dist:.2f} km, consumed {e_leg:.2f} kWh)."
+            })
+
+            planned.append(tgt)
+            bat = new_bat
+            cur = tgt
+
+        else:
+            # Baseline Strategy: evaluate reachable chargers, pick nearest reachable charger with feasible continuation
+            candidates = [c for c in dec["charger_candidates"] if c["continuation_feasible"]]
+            if not candidates:
+                # No feasible charger
+                is_feasible = False
+                infeasibility_reason = (
+                    f"Baseline route failed at {cur}: Battery {soc_pct(bat, capacity):.1f}% is insufficient "
+                    f"to reach {tgt} safely, and no reachable charging station permits a feasible continuation."
+                )
+                events.append({
+                    "type": "battery_decision",
+                    "from": cur, "to": tgt,
+                    "battery_decision": dec,
+                    "charger_candidates": dec["charger_candidates"],
+                    "selected_charger": None,
+                    "battery_before": round(bat, 4),
+                    "battery_after": round(bat, 4),
+                    "soc_before": soc_pct(bat, capacity),
+                    "soc_after": soc_pct(bat, capacity),
+                    "message": infeasibility_reason
+                })
+                break
+
+            # Baseline picks geographically nearest charger
+            chosen_cand = min(candidates, key=lambda c: c["dist_to_charger_km"])
+            ch_name = chosen_cand["name"]
+            dist_to_ch = chosen_cand["dist_to_charger_km"]
+            e_to_ch = chosen_cand["energy_to_charger_kwh"]
+            bat_at_ch = chosen_cand["battery_at_charger_kwh"]
+            add_kwh = chosen_cand["energy_added_kwh"]
+            ch_rate = graph.chargers_dict.get(ch_name, {}).get("rate_kw", ch_kw)
+            ch_minutes = add_kwh / ch_rate * 60.0
+
+            dist_from_ch = chosen_cand["dist_from_charger_km"]
+            e_from_ch = chosen_cand["energy_from_charger_kwh"]
+            bat_at_tgt = chosen_cand["battery_at_next_kwh"]
+
+            sel_reason = {
+                "charger": ch_name,
+                "strategy": "Baseline: Geographically nearest reachable charger",
+                "current_location": cur,
+                "next_destination": tgt,
+                "battery_before_travel_kwh": round(bat, 4),
+                "battery_before_travel_pct": soc_pct(bat, capacity),
+                "dist_to_charger_km": round(dist_to_ch, 3),
+                "energy_to_charger_kwh": round(e_to_ch, 3),
+                "battery_at_charger_kwh": round(bat_at_ch, 4),
+                "battery_at_charger_pct": soc_pct(bat_at_ch, capacity),
+                "energy_added_kwh": round(add_kwh, 3),
+                "battery_after_charge_kwh": round(capacity, 4),
+                "battery_after_charge_pct": 100.0,
+                "dist_from_charger_km": round(dist_from_ch, 3),
+                "energy_from_charger_kwh": round(e_from_ch, 3),
+                "battery_at_destination_kwh": round(bat_at_tgt, 4),
+                "battery_at_destination_pct": soc_pct(bat_at_tgt, capacity),
+                "threshold_kwh": round(dec["threshold_kwh"], 4),
+                "threshold_pct": threshold_pct,
+                "reserve_kwh": round(dec["reserve_kwh"], 4),
+                "reserve_pct": reserve_pct,
+                "projected_direct_kwh": round(dec["projected_battery_kwh"], 4),
+                "projected_direct_pct": dec["projected_soc_pct"],
+                "direct_dist_km": round(leg_dist, 3),
+                "total_via_km": round(chosen_cand["total_route_via_km"], 3),
+                "detour_increase_km": round(chosen_cand["detour_increase_km"], 3),
+                "explanation": (
+                    f"Baseline decision: Selected nearest reachable charger {ch_name} ({dist_to_ch:.2f} km). "
+                    f"Direct travel would leave {dec['projected_soc_pct']:.1f}% battery, failing threshold. "
+                    f"Recharging to 100% (+{add_kwh:.2f} kWh in {ch_minutes:.1f} min) enables reaching {tgt} safely. "
+                    f"Detour increases route distance by +{chosen_cand['detour_increase_km']:.2f} km."
+                )
+            }
+
+            events.append({
+                "type": "battery_decision",
+                "from": cur, "to": tgt,
+                "battery_decision": dec,
+                "charger_candidates": dec["charger_candidates"],
+                "selected_charger": ch_name,
+                "selection_reason": sel_reason,
+                "battery_before": round(bat, 4),
+                "battery_after": round(bat, 4),
+                "soc_before": soc_pct(bat, capacity),
+                "soc_after": soc_pct(bat, capacity),
+                "message": (
+                    f"Battery at {cur} ({soc_pct(bat, capacity):.1f}%) requires charging. "
+                    f"Baseline selected nearest reachable station {ch_name}."
+                )
+            })
+
+            # Travel to charger
+            cost_acc += dist_to_ch
+            energy_acc += e_to_ch
+            events.append({
+                "type": "travel_to_charger",
+                "from": cur, "to": ch_name,
+                "distance_km": round(dist_to_ch, 3),
+                "energy_kwh": round(e_to_ch, 3),
+                "battery_before": round(bat, 4),
+                "battery_after": round(bat_at_ch, 4),
+                "soc_before": soc_pct(bat, capacity),
+                "soc_after": soc_pct(bat_at_ch, capacity),
+                "message": f"Baseline travel {cur} → {ch_name}: {dist_to_ch:.2f} km, use {e_to_ch:.2f} kWh."
+            })
+
+            # Charge
+            charge_min_acc += ch_minutes
+            events.append({
+                "type": "charge",
+                "station": ch_name,
+                "added_kwh": round(add_kwh, 3),
+                "charge_minutes": round(ch_minutes, 1),
+                "battery_before": round(bat_at_ch, 4),
+                "battery_after": round(capacity, 4),
+                "soc_before": soc_pct(bat_at_ch, capacity),
+                "soc_after": 100.0,
+                "message": f"Recharged +{add_kwh:.2f} kWh at {ch_name} ({ch_minutes:.1f} min)."
+            })
+
+            # Continue to destination
+            cost_acc += dist_from_ch
+            energy_acc += e_from_ch
+            ev_type = "delivery" if target_type == "delivery" else "finish"
+            events.append({
+                "type": ev_type,
+                "from": ch_name, "to": tgt,
+                "distance_km": round(dist_from_ch, 3),
+                "energy_kwh": round(e_from_ch, 3),
+                "battery_before": round(capacity, 4),
+                "battery_after": round(bat_at_tgt, 4),
+                "soc_before": 100.0,
+                "soc_after": soc_pct(bat_at_tgt, capacity),
+                "message": f"Travel {ch_name} → {tgt}: {dist_from_ch:.2f} km, use {e_from_ch:.2f} kWh."
+            })
+
+            planned.extend([ch_name, tgt])
+            bat = bat_at_tgt
+            cur = tgt
+
+    # Metrics
+    service_time = len(order_sequence) * 4.0  # 4 min standard service per delivery
+    travel_time = (cost_acc / speed * 60.0) if speed > 0 else 0.0
+    total_time = round(travel_time + charge_min_acc + service_time, 1)
+    within_budget = cost_acc <= cfg.get("route_budget_km", 9999.0)
+
+    # Simulation steps
+    sim_steps = build_graph_simulation_steps(events, graph, cfg)
+
+    return {
+        "stage": "baseline",
+        "feasible": is_feasible,
+        "infeasibility_reason": infeasibility_reason if not is_feasible else None,
+        "planned_route": planned,
+        "delivery_order": order_sequence,
+        "charging_events": events,
+        "charging_stops": [e for e in events if e.get("type") == "charge"],
+        "metrics": {
+            "distance_km": round(cost_acc, 3) if is_feasible else None,
+            "energy_kwh": round(energy_acc, 3) if is_feasible else None,
+            "orders_done": len(order_sequence) if is_feasible else 0,
+            "orders_total": len(order_sequence),
+            "time_min": total_time if is_feasible else None,
+            "charge_min": round(charge_min_acc, 1) if is_feasible else None,
+            "remaining_kwh": round(bat, 3) if is_feasible else None,
+            "remaining_pct": soc_pct(bat, capacity) if is_feasible else None,
+            "feasible": is_feasible,
+            "within_budget": within_budget,
+        },
+        "simulation_steps": sim_steps,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Stage 2: Branch & Bound Optimization Engine
+# ---------------------------------------------------------------------------
+
+def branch_and_bound_with_charging(order_nodes: list, cfg: dict, graph: NetworkGraph = None) -> dict:
+    """
+    Branch and Bound solver with joint charging station decisions.
+    Works seamlessly on both default sample network and custom user graphs.
+    """
+    if graph is None:
+        graph = _DEFAULT_GRAPH
+
+    capacity = cfg["capacity_kwh"]
+    soc0 = cfg["soc_pct"]
+    eff = cfg["km_per_kwh"]
+    speed = cfg.get("average_speed_kmh", 30.0)
+    ch_kw = cfg.get("charger_kw", 22.0)
+    reserve_pct = cfg["reserve_pct"]
+    threshold_pct = cfg["threshold_pct"]
+    budget_km = cfg.get("route_budget_km", 9999.0)
+
+    battery0 = capacity * soc0 / 100.0
+    threshold_kwh = capacity * threshold_pct / 100.0
+    reserve_kwh = capacity * reserve_pct / 100.0
+
+    # Search tree container
+    tree = {}
+    node_id_counter = count(1)
+    serial_gen = count(1)
+
+    def new_tree_node(parent_id, label, cost, lb, depth):
+        nid = next(node_id_counter)
+        tree[nid] = {
             "id": nid, "parent": parent_id, "label": label,
-            "bound": round(bound, 3), "cost": round(cost, 3),
-            "status": "open", "depth": depth
-        })
+            "cost": round(cost, 2), "lb": round(lb, 2),
+            "depth": depth, "status": "candidate"
+        }
         return nid
 
-    init_lb = lower_bound("Depot", order_nodes, "Hub")
-    root_id = new_tree_node(None, "Start at Depot", init_lb, 0.0, 0)
+    init_lb = lower_bound(graph.start_id, order_nodes, graph.end_id, graph.distance)
+    root_id = new_tree_node(None, f"Start: {graph.start_id}", 0.0, init_lb, 0)
+    tree[root_id]["status"] = "root"
 
-    # Priority queue: min-heap ordered by (lower_bound, serial, ...)
-    # Tuple: (lb, serial, cur, delivered, cost_so_far, bat, path, planned, events, tid)
     heap = []
     heapq.heappush(heap, (
         init_lb, next(serial_gen),
-        "Depot", frozenset(), 0.0, battery0, [], ["Depot"], [], root_id
+        graph.start_id, frozenset(), 0.0, battery0, [], [graph.start_id], [], root_id
     ))
 
     best_cost = float("inf")
@@ -396,7 +947,6 @@ def branch_and_bound_with_charging(order_nodes: list, cfg: dict) -> dict:
         (lb, _, cur, delivered, cost_so_far,
          bat, path, planned, events, tid) = heapq.heappop(heap)
 
-        # Admissible pruning: bound cannot beat best known complete solution
         if lb >= best_cost - 1e-9:
             tree[tid]["status"] = "pruned"
             pruned += 1
@@ -407,106 +957,95 @@ def branch_and_bound_with_charging(order_nodes: list, cfg: dict) -> dict:
 
         remaining = [nd for nd in order_nodes if nd not in delivered]
 
-        # -------------------------------------------------------------------
-        # Terminal condition: all deliveries completed, return to Hub
-        # -------------------------------------------------------------------
+        # Terminal state: all deliveries visited, travel to configured end node
         if not remaining:
-            leg_to_hub = distance(cur, "Hub")
-            needed_hub = energy_for_leg(leg_to_hub, eff)
-            proj_hub = bat - needed_hub
-            dec_hub = evaluate_battery_decision(
+            leg_to_end = graph.distance(cur, graph.end_id)
+            if leg_to_end == float("inf"):
+                continue
+
+            needed_end = energy_for_leg(leg_to_end, eff)
+            proj_end = bat - needed_end
+
+            dec_end = evaluate_battery_decision(
                 battery_kwh=bat,
                 capacity_kwh=capacity,
                 threshold_pct=threshold_pct,
                 reserve_pct=reserve_pct,
                 cur=cur,
-                nxt="Hub",
-                eff=eff
+                nxt=graph.end_id,
+                eff=eff,
+                chargers=graph.charger_ids,
+                dist_fn=graph.distance
             )
 
-            # Option A: Direct return to Hub if projected battery remains strictly above threshold
-            if dec_hub["can_proceed_direct"]:
-                total_direct = cost_so_far + leg_to_hub
-                hub_events = events + [
+            # Option A: Direct finish
+            if dec_end["can_proceed_direct"]:
+                total_direct = cost_so_far + leg_to_end
+                end_events = events + [
                     {
                         "type": "battery_decision",
-                        "from": cur, "to": "Hub",
-                        "battery_decision": dec_hub,
-                        "charger_candidates": dec_hub["charger_candidates"],
+                        "from": cur, "to": graph.end_id,
+                        "battery_decision": dec_end,
+                        "charger_candidates": dec_end["charger_candidates"],
                         "selected_charger": None,
                         "battery_before": round(bat, 4),
-                        "battery_after": round(proj_hub, 4),
+                        "battery_after": round(proj_end, 4),
                         "soc_before": soc_pct(bat, capacity),
-                        "soc_after": soc_pct(proj_hub, capacity),
+                        "soc_after": soc_pct(proj_end, capacity),
                         "message": (
-                            f"At {cur} before Hub: Battery {soc_pct(bat, capacity):.1f}% ({bat:.2f} kWh). "
-                            f"Direct travel to Hub ({leg_to_hub:.2f} km) requires {needed_hub:.2f} kWh. "
-                            f"Projected battery at Hub is {soc_pct(proj_hub, capacity):.1f}% ({proj_hub:.2f} kWh), "
-                            f"strictly above {threshold_pct:.0f}% threshold ({threshold_kwh:.2f} kWh). "
-                            f"Charging required? No. Vehicle proceeds directly to Hub."
+                            f"At {cur} before {graph.end_id}: Battery {soc_pct(bat, capacity):.1f}% ({bat:.2f} kWh). "
+                            f"Direct travel to {graph.end_id} ({leg_to_end:.2f} km) requires {needed_end:.2f} kWh. "
+                            f"Projected battery at {graph.end_id} is {soc_pct(proj_end, capacity):.1f}% ({proj_end:.2f} kWh), "
+                            f"strictly above {threshold_pct:.0f}% threshold. Direct arrival approved."
                         )
                     },
                     {
                         "type": "finish",
-                        "from": cur,
-                        "to": "Hub",
-                        "distance_km": round(leg_to_hub, 3),
-                        "energy_kwh": round(needed_hub, 3),
+                        "from": cur, "to": graph.end_id,
+                        "distance_km": round(leg_to_end, 3),
+                        "energy_kwh": round(needed_end, 3),
                         "battery_before": round(bat, 4),
-                        "battery_after": round(proj_hub, 4),
+                        "battery_after": round(proj_end, 4),
                         "soc_before": soc_pct(bat, capacity),
-                        "soc_after": soc_pct(proj_hub, capacity),
-                        "battery_decision": dec_hub,
-                        "message": (
-                            f"Travel {cur} → Hub: {leg_to_hub:.2f} km, use {needed_hub:.2f} kWh. "
-                            f"Battery remaining: {soc_pct(proj_hub, capacity):.1f}%."
-                        )
+                        "soc_after": soc_pct(proj_end, capacity),
+                        "message": f"Travel {cur} → {graph.end_id}: {leg_to_end:.2f} km, use {needed_end:.2f} kWh."
                     }
                 ]
                 if total_direct < best_cost:
                     best_cost = total_direct
                     best_route = list(path)
-                    best_planned = list(planned) + ["Hub"]
-                    best_events = hub_events
+                    best_planned = list(planned) + [graph.end_id]
+                    best_events = end_events
                     lid = new_tree_node(
-                        tid, f"Finish Hub · {total_direct:.2f} km",
+                        tid, f"{graph.end_id} · {total_direct:.2f} km",
                         total_direct, total_direct, len(path) + 1
                     )
                     tree[lid]["status"] = "best"
-                else:
-                    lid = new_tree_node(
-                        tid, f"Finish Hub · {total_direct:.2f} km",
-                        total_direct, total_direct, len(path) + 1
-                    )
-                    tree[lid]["status"] = "complete"
 
-            # Option B: Projected battery <= threshold or insufficient: evaluate chargers before Hub
+            # Option B: Charger detour before returning to End node
             else:
-                for ch in CHARGERS:
-                    if ch == cur:
+                for cand in dec_end["charger_candidates"]:
+                    if not cand["continuation_feasible"]:
                         continue
-                    to_ch = distance(cur, ch)
-                    e_to_ch = energy_for_leg(to_ch, eff)
-                    if bat - e_to_ch < reserve_kwh - 1e-9:
-                        continue  # Cannot reach charger
+                    ch = cand["name"]
+                    to_ch = cand["dist_to_charger_km"]
+                    e_to_ch = cand["energy_to_charger_kwh"]
+                    bat_at_ch = cand["battery_at_charger_kwh"]
+                    add_kwh = cand["energy_added_kwh"]
+                    rate_kw = graph.chargers_dict.get(ch, {}).get("rate_kw", ch_kw)
+                    charge_min = add_kwh / rate_kw * 60.0
 
-                    bat_at_ch = bat - e_to_ch
-                    add_kwh = capacity - bat_at_ch
-                    ch_to_hub = distance(ch, "Hub")
-                    e_ch_to_hub = energy_for_leg(ch_to_hub, eff)
-                    bat_at_hub = capacity - e_ch_to_hub
+                    ch_to_end = cand["dist_from_charger_km"]
+                    e_ch_to_end = cand["energy_from_charger_kwh"]
+                    bat_at_end = cand["battery_at_next_kwh"]
 
-                    if bat_at_hub < reserve_kwh - 1e-9:
-                        continue  # Cannot reach Hub even after charging
-
-                    total_via = cost_so_far + to_ch + ch_to_hub
+                    total_via = cost_so_far + to_ch + ch_to_end
                     if total_via < best_cost:
-                        charge_min = add_kwh / rate_kw * 60.0
-                        detour_diff = (to_ch + ch_to_hub) - leg_to_hub
+                        detour_diff = (to_ch + ch_to_end) - leg_to_end
                         sel_reason = {
                             "charger": ch,
                             "current_location": cur,
-                            "next_destination": "Hub",
+                            "next_destination": graph.end_id,
                             "battery_before_travel_kwh": round(bat, 4),
                             "battery_before_travel_pct": soc_pct(bat, capacity),
                             "dist_to_charger_km": round(to_ch, 3),
@@ -516,42 +1055,37 @@ def branch_and_bound_with_charging(order_nodes: list, cfg: dict) -> dict:
                             "energy_added_kwh": round(add_kwh, 3),
                             "battery_after_charge_kwh": round(capacity, 4),
                             "battery_after_charge_pct": 100.0,
-                            "dist_from_charger_km": round(ch_to_hub, 3),
-                            "energy_from_charger_kwh": round(e_ch_to_hub, 3),
-                            "battery_at_destination_kwh": round(bat_at_hub, 4),
-                            "battery_at_destination_pct": soc_pct(bat_at_hub, capacity),
+                            "dist_from_charger_km": round(ch_to_end, 3),
+                            "energy_from_charger_kwh": round(e_ch_to_end, 3),
+                            "battery_at_destination_kwh": round(bat_at_end, 4),
+                            "battery_at_destination_pct": soc_pct(bat_at_end, capacity),
                             "threshold_kwh": round(threshold_kwh, 4),
                             "threshold_pct": threshold_pct,
                             "reserve_kwh": round(reserve_kwh, 4),
                             "reserve_pct": reserve_pct,
-                            "projected_direct_kwh": round(dec_hub["projected_battery_kwh"], 4),
-                            "projected_direct_pct": dec_hub["projected_soc_pct"],
-                            "direct_dist_km": round(leg_to_hub, 3),
-                            "total_via_km": round(to_ch + ch_to_hub, 3),
+                            "projected_direct_kwh": round(dec_end["projected_battery_kwh"], 4),
+                            "projected_direct_pct": dec_end["projected_soc_pct"],
+                            "direct_dist_km": round(leg_to_end, 3),
+                            "total_via_km": round(to_ch + ch_to_end, 3),
                             "detour_increase_km": round(detour_diff, 3),
                             "explanation": (
-                                f"Charging at {ch} selected: Direct travel {cur} → Hub ({leg_to_hub:.2f} km) "
-                                f"would leave {dec_hub['projected_soc_pct']:.1f}% battery ({dec_hub['projected_battery_kwh']:.2f} kWh), "
-                                f"failing the {threshold_pct:.0f}% threshold ({threshold_kwh:.2f} kWh). "
-                                f"Charger {ch} is reachable at {to_ch:.2f} km ({e_to_ch:.2f} kWh), arriving with "
-                                f"{soc_pct(bat_at_ch, capacity):.1f}% battery (satisfies {reserve_pct:.0f}% reserve). "
-                                f"Recharging to 100% (+{add_kwh:.2f} kWh in {charge_min:.1f} min) enables reaching Hub "
-                                f"with {soc_pct(bat_at_hub, capacity):.1f}% battery. "
-                                f"Selected because it minimizes total route distance (detour effect: +{detour_diff:.2f} km) "
-                                f"among all feasible alternatives."
+                                f"Charging at {ch} selected: Direct travel {cur} → {graph.end_id} ({leg_to_end:.2f} km) "
+                                f"would leave {dec_end['projected_soc_pct']:.1f}% battery, failing threshold. "
+                                f"Recharging at {ch} allows reaching {graph.end_id} with {soc_pct(bat_at_end, capacity):.1f}% battery. "
+                                f"Selected because it minimizes total route distance among all feasible alternatives."
                             )
                         }
                         fin_events = events + [
                             {
                                 "type": "battery_decision",
-                                "from": cur, "to": "Hub",
-                                "battery_decision": dec_hub,
-                                "charger_candidates": dec_hub["charger_candidates"],
+                                "from": cur, "to": graph.end_id,
+                                "battery_decision": dec_end,
+                                "charger_candidates": dec_end["charger_candidates"],
                                 "selected_charger": ch,
                                 "selection_reason": sel_reason,
                                 "message": (
-                                    f"Battery {soc_pct(bat, capacity):.1f}% — {dec_hub['status_label']}. "
-                                    f"Charging evaluation selected {ch} for lowest-cost feasible return to Hub."
+                                    f"Battery {soc_pct(bat, capacity):.1f}% — {dec_end['status_label']}. "
+                                    f"Selected {ch} for lowest-cost feasible return to {graph.end_id}."
                                 )
                             },
                             {
@@ -574,36 +1108,37 @@ def branch_and_bound_with_charging(order_nodes: list, cfg: dict) -> dict:
                                 "battery_after": round(capacity, 4),
                                 "soc_before": soc_pct(bat_at_ch, capacity),
                                 "soc_after": 100.0,
-                                "message": f"Charge {add_kwh:.2f} kWh at {ch} ({charge_min:.1f} min). SOC: {soc_pct(bat_at_ch, capacity):.1f}% → 100.0%."
+                                "message": f"Charge {add_kwh:.2f} kWh at {ch} ({charge_min:.1f} min)."
                             },
                             {
                                 "type": "finish",
-                                "from": ch, "to": "Hub",
-                                "distance_km": round(ch_to_hub, 3),
-                                "energy_kwh": round(e_ch_to_hub, 3),
+                                "from": ch, "to": graph.end_id,
+                                "distance_km": round(ch_to_end, 3),
+                                "energy_kwh": round(e_ch_to_end, 3),
                                 "battery_before": round(capacity, 4),
-                                "battery_after": round(bat_at_hub, 4),
+                                "battery_after": round(bat_at_end, 4),
                                 "soc_before": 100.0,
-                                "soc_after": soc_pct(bat_at_hub, capacity),
-                                "message": f"Travel {ch} → Hub: {ch_to_hub:.2f} km, use {e_ch_to_hub:.2f} kWh."
+                                "soc_after": soc_pct(bat_at_end, capacity),
+                                "message": f"Travel {ch} → {graph.end_id}: {ch_to_end:.2f} km, use {e_ch_to_end:.2f} kWh."
                             }
                         ]
                         best_cost = total_via
                         best_route = list(path)
-                        best_planned = list(planned) + [ch, "Hub"]
+                        best_planned = list(planned) + [ch, graph.end_id]
                         best_events = fin_events
                         lid = new_tree_node(
-                            tid, f"Hub via {ch} · {total_via:.2f} km",
+                            tid, f"{graph.end_id} via {ch} · {total_via:.2f} km",
                             total_via, total_via, len(path) + 2
                         )
                         tree[lid]["status"] = "best"
             continue
 
-        # -------------------------------------------------------------------
         # Expand each remaining delivery
-        # -------------------------------------------------------------------
         for nxt in remaining:
-            leg = distance(cur, nxt)
+            leg = graph.distance(cur, nxt)
+            if leg == float("inf"):
+                continue
+
             needed = energy_for_leg(leg, eff)
             dec = evaluate_battery_decision(
                 battery_kwh=bat,
@@ -612,7 +1147,9 @@ def branch_and_bound_with_charging(order_nodes: list, cfg: dict) -> dict:
                 reserve_pct=reserve_pct,
                 cur=cur,
                 nxt=nxt,
-                eff=eff
+                eff=eff,
+                chargers=graph.charger_ids,
+                dist_fn=graph.distance
             )
 
             # Option A: Direct delivery (if projected battery remains strictly above threshold)
@@ -623,7 +1160,7 @@ def branch_and_bound_with_charging(order_nodes: list, cfg: dict) -> dict:
                 new_path = path + [nxt]
                 new_planned = planned + [nxt]
                 new_rem = [nd for nd in order_nodes if nd not in new_del]
-                lb_direct = round(new_cost + lower_bound(nxt, new_rem, "Hub"), 3)
+                lb_direct = round(new_cost + lower_bound(nxt, new_rem, graph.end_id, graph.distance), 3)
 
                 new_ev = events + [
                     {
@@ -640,8 +1177,7 @@ def branch_and_bound_with_charging(order_nodes: list, cfg: dict) -> dict:
                             f"At {cur} before {nxt}: Battery {soc_pct(bat, capacity):.1f}% ({bat:.2f} kWh). "
                             f"Direct travel to {nxt} ({leg:.2f} km) requires {needed:.2f} kWh. "
                             f"Projected battery after arrival: {soc_pct(new_bat, capacity):.1f}% ({new_bat:.2f} kWh), "
-                            f"strictly above {threshold_pct:.0f}% threshold ({threshold_kwh:.2f} kWh). "
-                            f"Charging required? No. Direct delivery approved."
+                            f"strictly above {threshold_pct:.0f}% threshold. Direct delivery approved."
                         )
                     },
                     {
@@ -653,57 +1189,45 @@ def branch_and_bound_with_charging(order_nodes: list, cfg: dict) -> dict:
                         "battery_after": round(new_bat, 4),
                         "soc_before": soc_pct(bat, capacity),
                         "soc_after": soc_pct(new_bat, capacity),
-                        "battery_decision": dec,
-                        "message": (
-                            f"Travel {cur} → {nxt}: {leg:.2f} km, use {needed:.2f} kWh. "
-                            f"Battery: {soc_pct(new_bat, capacity):.1f}%."
-                        )
+                        "message": f"Travel {cur} → {nxt}: {leg:.2f} km, use {needed:.2f} kWh."
                     }
                 ]
 
-                status = "open" if lb_direct < best_cost - 1e-9 else "pruned"
-                child_id = new_tree_node(tid, f"Visit {nxt}", lb_direct, new_cost, len(new_path))
-                if status == "pruned":
-                    tree[child_id]["status"] = "pruned"
-                    pruned += 1
-                else:
+                nid = new_tree_node(tid, f"{nxt} (direct)", new_cost, lb_direct, len(new_path))
+                if lb_direct < best_cost:
                     heapq.heappush(heap, (
                         lb_direct, next(serial_gen),
-                        nxt, new_del, new_cost, new_bat,
-                        new_path, new_planned, new_ev, child_id
+                        nxt, new_del, new_cost, new_bat, new_path, new_planned, new_ev, nid
                     ))
+                else:
+                    tree[nid]["status"] = "pruned"
+                    pruned += 1
 
-            # Option B: Projected battery <= threshold or insufficient: evaluate chargers
+            # Option B: Charging detour required before reaching next delivery
             else:
-                any_charger_pushed = False
-                for ch in CHARGERS:
-                    if ch == cur:
+                for cand in dec["charger_candidates"]:
+                    if not cand["continuation_feasible"]:
                         continue
-                    to_ch = distance(cur, ch)
-                    e_to_ch = energy_for_leg(to_ch, eff)
-                    if bat - e_to_ch < reserve_kwh - 1e-9:
-                        continue  # Cannot reach charger
+                    ch = cand["name"]
+                    to_ch = cand["dist_to_charger_km"]
+                    e_to_ch = cand["energy_to_charger_kwh"]
+                    bat_at_ch = cand["battery_at_charger_kwh"]
+                    add_kwh = cand["energy_added_kwh"]
+                    rate_kw = graph.chargers_dict.get(ch, {}).get("rate_kw", ch_kw)
+                    charge_min = add_kwh / rate_kw * 60.0
 
-                    bat_at_ch = bat - e_to_ch
-                    ch_to_nxt = distance(ch, nxt)
-                    e_ch_to_nxt = energy_for_leg(ch_to_nxt, eff)
+                    ch_to_nxt = cand["dist_from_charger_km"]
+                    e_ch_to_nxt = cand["energy_from_charger_kwh"]
+                    bat_after_delivery = cand["battery_at_next_kwh"]
 
-                    # Charge to full capacity at station
-                    add_kwh = capacity - bat_at_ch
-                    bat_at_nxt = capacity - e_ch_to_nxt
-                    if bat_at_nxt < reserve_kwh - 1e-9:
-                        continue  # Cannot reach next delivery even after full charge
-
-                    new_bat = bat_at_nxt
-                    new_cost = cost_so_far + to_ch + ch_to_nxt
+                    detour_cost = cost_so_far + to_ch + ch_to_nxt
                     new_del = delivered | {nxt}
                     new_path = path + [nxt]
                     new_planned = planned + [ch, nxt]
                     new_rem = [nd for nd in order_nodes if nd not in new_del]
-                    lb_via = round(new_cost + lower_bound(nxt, new_rem, "Hub"), 3)
-                    charge_min = add_kwh / rate_kw * 60.0
-                    detour_diff = (to_ch + ch_to_nxt) - leg
+                    lb_ch = round(detour_cost + lower_bound(nxt, new_rem, graph.end_id, graph.distance), 3)
 
+                    detour_diff = (to_ch + ch_to_nxt) - leg
                     sel_reason = {
                         "charger": ch,
                         "current_location": cur,
@@ -719,8 +1243,8 @@ def branch_and_bound_with_charging(order_nodes: list, cfg: dict) -> dict:
                         "battery_after_charge_pct": 100.0,
                         "dist_from_charger_km": round(ch_to_nxt, 3),
                         "energy_from_charger_kwh": round(e_ch_to_nxt, 3),
-                        "battery_at_destination_kwh": round(new_bat, 4),
-                        "battery_at_destination_pct": soc_pct(new_bat, capacity),
+                        "battery_at_destination_kwh": round(bat_after_delivery, 4),
+                        "battery_at_destination_pct": soc_pct(bat_after_delivery, capacity),
                         "threshold_kwh": round(threshold_kwh, 4),
                         "threshold_pct": threshold_pct,
                         "reserve_kwh": round(reserve_kwh, 4),
@@ -731,19 +1255,14 @@ def branch_and_bound_with_charging(order_nodes: list, cfg: dict) -> dict:
                         "total_via_km": round(to_ch + ch_to_nxt, 3),
                         "detour_increase_km": round(detour_diff, 3),
                         "explanation": (
-                            f"Charging at {ch} selected: Direct travel {cur} → {nxt} ({leg:.2f} km) "
-                            f"would leave {dec['projected_soc_pct']:.1f}% battery ({dec['projected_battery_kwh']:.2f} kWh), "
-                            f"failing the {threshold_pct:.0f}% threshold ({threshold_kwh:.2f} kWh). "
-                            f"Charger {ch} is reachable at {to_ch:.2f} km ({e_to_ch:.2f} kWh), arriving with "
-                            f"{soc_pct(bat_at_ch, capacity):.1f}% battery (satisfies {reserve_pct:.0f}% reserve). "
-                            f"Recharging to 100% (+{add_kwh:.2f} kWh in {charge_min:.1f} min) enables reaching {nxt} "
-                            f"with {soc_pct(new_bat, capacity):.1f}% battery. "
-                            f"Selected because it minimizes total route distance (detour effect: +{detour_diff:.2f} km) "
-                            f"among all feasible alternatives."
+                            f"Charging at {ch} evaluated: Direct travel {cur} → {nxt} ({leg:.2f} km) would leave "
+                            f"{dec['projected_soc_pct']:.1f}% battery, failing threshold. "
+                            f"Recharging at {ch} to 100% (+{add_kwh:.2f} kWh in {charge_min:.1f} min) enables reaching {nxt} "
+                            f"with {soc_pct(bat_after_delivery, capacity):.1f}% battery. Detour effect: +{detour_diff:.2f} km."
                         )
                     }
 
-                    new_ev = events + [
+                    ev_ch = events + [
                         {
                             "type": "battery_decision",
                             "from": cur, "to": nxt,
@@ -753,7 +1272,7 @@ def branch_and_bound_with_charging(order_nodes: list, cfg: dict) -> dict:
                             "selection_reason": sel_reason,
                             "message": (
                                 f"Battery {soc_pct(bat, capacity):.1f}% — {dec['status_label']}. "
-                                f"Charging evaluation selected {ch} for lowest-cost feasible continuation."
+                                f"Branch evaluates detour via {ch} to reach {nxt} safely."
                             )
                         },
                         {
@@ -765,7 +1284,7 @@ def branch_and_bound_with_charging(order_nodes: list, cfg: dict) -> dict:
                             "battery_after": round(bat_at_ch, 4),
                             "soc_before": soc_pct(bat, capacity),
                             "soc_after": soc_pct(bat_at_ch, capacity),
-                            "message": f"Travel {cur} → {ch}: {to_ch:.2f} km, use {e_to_ch:.2f} kWh."
+                            "message": f"Detour {cur} → {ch}: {to_ch:.2f} km, use {e_to_ch:.2f} kWh."
                         },
                         {
                             "type": "charge",
@@ -776,10 +1295,7 @@ def branch_and_bound_with_charging(order_nodes: list, cfg: dict) -> dict:
                             "battery_after": round(capacity, 4),
                             "soc_before": soc_pct(bat_at_ch, capacity),
                             "soc_after": 100.0,
-                            "message": (
-                                f"Charge {add_kwh:.2f} kWh at {ch} ({charge_min:.1f} min). "
-                                f"SOC: {soc_pct(bat_at_ch, capacity):.1f}% → 100.0%."
-                            )
+                            "message": f"Charge {add_kwh:.2f} kWh at {ch} ({charge_min:.1f} min)."
                         },
                         {
                             "type": "delivery",
@@ -787,205 +1303,186 @@ def branch_and_bound_with_charging(order_nodes: list, cfg: dict) -> dict:
                             "distance_km": round(ch_to_nxt, 3),
                             "energy_kwh": round(e_ch_to_nxt, 3),
                             "battery_before": round(capacity, 4),
-                            "battery_after": round(new_bat, 4),
+                            "battery_after": round(bat_after_delivery, 4),
                             "soc_before": 100.0,
-                            "soc_after": soc_pct(new_bat, capacity),
-                            "message": (
-                                f"Travel {ch} → {nxt}: {ch_to_nxt:.2f} km, use {e_ch_to_nxt:.2f} kWh. "
-                                f"Battery: {soc_pct(new_bat, capacity):.1f}%."
-                            )
+                            "soc_after": soc_pct(bat_after_delivery, capacity),
+                            "message": f"Deliver {ch} → {nxt}: {ch_to_nxt:.2f} km, use {e_ch_to_nxt:.2f} kWh."
                         }
                     ]
 
-                    status = "open" if lb_via < best_cost - 1e-9 else "pruned"
-                    child_id = new_tree_node(
-                        tid, f"Via {ch} → {nxt}", lb_via, new_cost, len(new_path)
-                    )
-                    if status == "pruned":
-                        tree[child_id]["status"] = "pruned"
-                        pruned += 1
-                    else:
+                    nid = new_tree_node(tid, f"{nxt} via {ch}", detour_cost, lb_ch, len(new_path))
+                    if lb_ch < best_cost:
                         heapq.heappush(heap, (
-                            lb_via, next(serial_gen),
-                            nxt, new_del, new_cost, new_bat,
-                            new_path, new_planned, new_ev, child_id
+                            lb_ch, next(serial_gen),
+                            nxt, new_del, detour_cost, bat_after_delivery, new_path, new_planned, ev_ch, nid
                         ))
-                        any_charger_pushed = True
+                    else:
+                        tree[nid]["status"] = "pruned"
+                        pruned += 1
 
-                if not any_charger_pushed:
-                    child_id = new_tree_node(
-                        tid, f"✗ Infeasible for {nxt}", float("inf"), cost_so_far, len(path) + 1
-                    )
-                    tree[child_id]["status"] = "pruned"
-                    pruned += 1
-
+    feasible = best_cost < float("inf")
     return {
+        "feasible": feasible,
         "best_route": best_route,
-        "best_cost_km": round(best_cost, 3) if best_cost < float("inf") else None,
-        "search_tree": tree,
+        "best_planned": best_planned,
+        "best_cost_km": round(best_cost, 3) if feasible else None,
+        "best_events": best_events,
         "explored": explored,
         "pruned": pruned,
-        "best_events": best_events,
-        "best_planned": best_planned,
-        "feasible": best_cost < float("inf"),
+        "search_tree": list(tree.values()),
     }
 
 
-def branch_and_bound(order_nodes: list, cfg: dict = None) -> tuple:
-    """
-    Backwards-compatible interface for unconstrained or default B&B.
-    Returns (best_route, best_cost, search_tree, explored, pruned).
-    """
+def branch_and_bound(order_nodes: list, cfg: dict = None) -> tuple[float, list[str]]:
+    """Classic Branch & Bound without charging (returns (best_distance_km, best_route))."""
     if cfg is None:
-        cfg = {
-            "capacity_kwh": 40.0,
-            "soc_pct": 100.0,
-            "km_per_kwh": 6.0,
-            "average_speed_kmh": 30.0,
-            "charger_kw": 22.0,
-            "reserve_pct": 0.0,
-            "threshold_pct": 0.0,
-            "route_budget_km": 1000.0,
-        }
+        cfg = {"capacity_kwh": 40, "soc_pct": 100, "km_per_kwh": 6, "average_speed_kmh": 30,
+               "charger_kw": 22, "reserve_pct": 10, "threshold_pct": 20, "route_budget_km": 150}
     res = branch_and_bound_with_charging(order_nodes, cfg)
-    return res["best_route"], res["best_cost_km"], res["search_tree"], res["explored"], res["pruned"]
+    return res["best_cost_km"], res["best_route"]
+
+
+def exhaustive_search(order_nodes: list, cfg: dict, graph: NetworkGraph = None) -> tuple[float, list[str]]:
+    """Brute-force verification over all order permutations."""
+    if graph is None:
+        graph = _DEFAULT_GRAPH
+
+    capacity = cfg["capacity_kwh"]
+    soc0 = cfg["soc_pct"]
+    eff = cfg["km_per_kwh"]
+    reserve_pct = cfg["reserve_pct"]
+    threshold_pct = cfg["threshold_pct"]
+
+    battery0 = capacity * soc0 / 100.0
+    reserve_kwh = capacity * reserve_pct / 100.0
+    threshold_kwh = capacity * threshold_pct / 100.0
+
+    best_cost = float("inf")
+    best_perm = None
+
+    for perm in permutations(order_nodes):
+        cur = graph.start_id
+        bat = battery0
+        cost = 0.0
+        feasible_perm = True
+
+        for nxt in perm:
+            d_direct = graph.distance(cur, nxt)
+            if d_direct == float("inf"):
+                feasible_perm = False
+                break
+            e_direct = energy_for_leg(d_direct, eff)
+            proj_bat = bat - e_direct
+
+            if proj_bat > threshold_kwh and proj_bat >= reserve_kwh - 1e-9:
+                cost += d_direct
+                bat = proj_bat
+                cur = nxt
+            else:
+                best_detour = float("inf")
+                best_ch = None
+                for ch in graph.charger_ids:
+                    d1 = graph.distance(cur, ch)
+                    d2 = graph.distance(ch, nxt)
+                    if d1 == float("inf") or d2 == float("inf"):
+                        continue
+                    if bat - energy_for_leg(d1, eff) < reserve_kwh - 1e-9:
+                        continue
+                    if capacity - energy_for_leg(d2, eff) < reserve_kwh - 1e-9:
+                        continue
+                    if d1 + d2 < best_detour:
+                        best_detour = d1 + d2
+                        best_ch = ch
+
+                if best_ch is None:
+                    feasible_perm = False
+                    break
+                cost += best_detour
+                bat = capacity - energy_for_leg(graph.distance(best_ch, nxt), eff)
+                cur = nxt
+
+        if not feasible_perm:
+            continue
+
+        # Leg to end node
+        d_end = graph.distance(cur, graph.end_id)
+        if d_end == float("inf"):
+            continue
+        e_end = energy_for_leg(d_end, eff)
+        proj_end = bat - e_end
+
+        if proj_end > threshold_kwh and proj_end >= reserve_kwh - 1e-9:
+            cost += d_end
+        else:
+            best_detour = float("inf")
+            for ch in graph.charger_ids:
+                d1 = graph.distance(cur, ch)
+                d2 = graph.distance(ch, graph.end_id)
+                if d1 == float("inf") or d2 == float("inf"):
+                    continue
+                if bat - energy_for_leg(d1, eff) < reserve_kwh - 1e-9:
+                    continue
+                if capacity - energy_for_leg(d2, eff) < reserve_kwh - 1e-9:
+                    continue
+                if d1 + d2 < best_detour:
+                    best_detour = d1 + d2
+            if best_detour == float("inf"):
+                continue
+            cost += best_detour
+
+        if cost < best_cost:
+            best_cost = cost
+            best_perm = list(perm)
+
+    feasible = (best_cost < float("inf"))
+    return {
+        "feasible": feasible,
+        "best_cost_km": round(best_cost, 3) if feasible else None,
+        "best_route": best_perm,
+    }
 
 
 # ---------------------------------------------------------------------------
-# Independent Exhaustive Brute-Force Search for Optimality Verification
+# Granular Simulation Steps Generator
 # ---------------------------------------------------------------------------
 
-def exhaustive_search(order_nodes: list, cfg: dict) -> dict:
+def build_graph_simulation_steps(events: list, graph: NetworkGraph, cfg: dict) -> list:
     """
-    Exhaustive search over all permutations and feasible charger choices
-    to independently verify the global optimality of Branch & Bound.
+    Decomposes route events into granular road-segment simulation steps
+    along Dijkstra shortest paths.
     """
     capacity = cfg["capacity_kwh"]
-    bat0 = capacity * cfg["soc_pct"] / 100.0
-    reserve_kwh = capacity * cfg["reserve_pct"] / 100.0
-    threshold_kwh = capacity * cfg["threshold_pct"] / 100.0
+    soc0 = cfg["soc_pct"]
     eff = cfg["km_per_kwh"]
 
-    def eval_perm(perm):
-        def solve(idx, cur, bat, dist_so_far, planned_seq):
-            if idx == len(perm):
-                req = energy_for_leg(distance(cur, "Hub"), eff)
-                best_via = float("inf")
-                best_seq = None
-                # Direct to Hub (if projected battery remains strictly above threshold and reserve)
-                if bat - req > threshold_kwh + 1e-9 and bat - req >= reserve_kwh - 1e-9:
-                    best_via = dist_so_far + distance(cur, "Hub")
-                    best_seq = planned_seq + ["Hub"]
-                # Via charger to Hub
-                for ch in CHARGERS:
-                    if ch == cur:
-                        continue
-                    to_ch = energy_for_leg(distance(cur, ch), eff)
-                    if bat - to_ch >= reserve_kwh - 1e-9:
-                        from_ch = energy_for_leg(distance(ch, "Hub"), eff)
-                        if capacity - from_ch >= reserve_kwh - 1e-9:
-                            cand_cost = dist_so_far + distance(cur, ch) + distance(ch, "Hub")
-                            if cand_cost < best_via:
-                                best_via = cand_cost
-                                best_seq = planned_seq + [ch, "Hub"]
-                return best_via, best_seq
-
-            nxt = perm[idx]
-            req = energy_for_leg(distance(cur, nxt), eff)
-            proj = bat - req
-
-            best_via = float("inf")
-            best_seq = None
-
-            # Direct move if strictly above threshold
-            if proj > threshold_kwh + 1e-9 and proj >= reserve_kwh - 1e-9:
-                c, s = solve(idx + 1, nxt, proj, dist_so_far + distance(cur, nxt), planned_seq + [nxt])
-                if c < best_via:
-                    best_via, best_seq = c, s
-            else:
-                # Charger moves
-                for ch in CHARGERS:
-                    if ch == cur:
-                        continue
-                    to_ch = energy_for_leg(distance(cur, ch), eff)
-                    if bat - to_ch >= reserve_kwh - 1e-9:
-                        from_ch = energy_for_leg(distance(ch, nxt), eff)
-                        if capacity - from_ch >= reserve_kwh - 1e-9:
-                            c, s = solve(
-                                idx + 1, nxt, capacity - from_ch,
-                                dist_so_far + distance(cur, ch) + distance(ch, nxt),
-                                planned_seq + [ch, nxt]
-                            )
-                            if c < best_via:
-                                best_via, best_seq = c, s
-            return best_via, best_seq
-
-        return solve(0, "Depot", bat0, 0.0, ["Depot"])
-
-    best_dist = float("inf")
-    best_perm = None
-    best_planned = None
-
-    for p in permutations(order_nodes):
-        cost, planned = eval_perm(list(p))
-        if cost < best_dist:
-            best_dist = cost
-            best_perm = list(p)
-            best_planned = planned
-
-    return {
-        "best_route": best_perm,
-        "best_cost_km": round(best_dist, 3) if best_dist < float("inf") else None,
-        "best_planned": best_planned,
-        "feasible": best_dist < float("inf"),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Road-Segment-by-Road-Segment Simulation Steps Builder
-# ---------------------------------------------------------------------------
-
-def build_simulation_steps(bnb_result: dict, cfg: dict, selected: list) -> list:
-    """
-    Decomposes the planned route into road segments along Dijkstra shortest paths.
-    Generates granular simulation steps with gradual battery depletion,
-    explicit charging steps, and synchronized explanations.
-    """
-    capacity = cfg["capacity_kwh"]
-    steps = []
-
-    steps.append({
+    steps = [{
         "type": "start",
-        "from": "Depot",
-        "to": "Depot",
-        "title": "Start at Depot",
+        "from": graph.start_id,
+        "to": graph.start_id,
+        "title": f"Start at {graph.start_id}",
         "detail": (
-            f"Delivery partner departs from Depot with starting battery "
-            f"{cfg['soc_pct']:.0f}% ({capacity * cfg['soc_pct'] / 100:.2f} kWh). "
-            f"Orders to deliver: {', '.join(o['name'] for o in selected)}."
+            f"EV departing from {graph.start_id}. Battery: {soc0:.1f}% "
+            f"({capacity * soc0 / 100:.2f} kWh). Threshold: {cfg['threshold_pct']:.0f}% "
+            f"({capacity * cfg['threshold_pct'] / 100:.2f} kWh). Reserve: {cfg['reserve_pct']:.0f}% "
+            f"({capacity * cfg['reserve_pct'] / 100:.2f} kWh)."
         ),
         "formula": (
-            f"Available energy = {capacity:.1f} × {cfg['soc_pct']:.0f}/100 "
-            f"= {capacity * cfg['soc_pct'] / 100:.2f} kWh | "
-            f"Safety reserve ({cfg['reserve_pct']:.0f}%) = {capacity * cfg['reserve_pct'] / 100:.2f} kWh | "
-            f"Threshold ({cfg['threshold_pct']:.0f}%) = {capacity * cfg['threshold_pct'] / 100:.2f} kWh"
+            f"Initial Energy = {capacity:.1f} kWh × {soc0:.0f}% = {capacity * soc0 / 100:.2f} kWh | "
+            f"Threshold = {capacity * cfg['threshold_pct'] / 100:.2f} kWh"
         ),
-        "battery_kwh": round(capacity * cfg["soc_pct"] / 100, 4),
-        "battery_pct": cfg["soc_pct"],
+        "battery_kwh": round(capacity * soc0 / 100, 4),
+        "battery_pct": soc0,
         "distance_so_far_km": 0.0,
         "energy_so_far_kwh": 0.0,
-        "dwell_ms": 2000,
-    })
+        "dwell_ms": 1500,
+    }]
 
     dist_acc = 0.0
     energy_acc = 0.0
 
-    for ev in bnb_result.get("best_events", []):
+    for ev in events:
         t = ev.get("type", "")
 
-        # -------------------------------------------------------------------
-        # Battery decision step (pause at current node before continuing)
-        # -------------------------------------------------------------------
         if t == "battery_decision":
             dec = ev.get("battery_decision", {})
             candidates = ev.get("charger_candidates", [])
@@ -1004,14 +1501,12 @@ def build_simulation_steps(bnb_result: dict, cfg: dict, selected: list) -> list:
                     f"Threshold: {cfg['threshold_pct']:.0f}% ({capacity * cfg['threshold_pct'] / 100:.2f} kWh) | "
                     f"Energy needed: {dec.get('needed_kwh', 0):.2f} kWh | "
                     f"Decision: {dec.get('status_label', '')} | "
-                    f"Candidate chargers: {cand_str} | "
-                    f"Selected charger: {ev.get('selected_charger', '—')} (minimizes total feasible route distance)."
+                    f"Selected charger: {ev.get('selected_charger', '—')}."
                 ),
                 "formula": (
                     f"Projected battery = {dec.get('projected_battery_kwh', 0):.2f} kWh "
                     f"({dec.get('projected_soc_pct', 0):.1f}%) | "
-                    f"Threshold = {dec.get('threshold_kwh', 0):.2f} kWh | "
-                    f"Status: {dec.get('status_label', '')}"
+                    f"Threshold = {dec.get('threshold_kwh', 0):.2f} kWh"
                 ),
                 "battery_kwh": ev.get("battery_before", dec.get("current_battery_kwh", 0)),
                 "battery_pct": dec.get("current_soc_pct", 0),
@@ -1024,17 +1519,13 @@ def build_simulation_steps(bnb_result: dict, cfg: dict, selected: list) -> list:
                 "dwell_ms": 2500,
             })
 
-        # -------------------------------------------------------------------
-        # Travel leg (broken into Dijkstra road segments)
-        # -------------------------------------------------------------------
         elif t in ("travel_to_charger", "delivery", "finish"):
             u_from = ev["from"]
             u_to = ev["to"]
-            path_vertices = shortest_path(u_from, u_to)
+            path_vertices = graph.shortest_path(u_from, u_to)
             n_segments = max(1, len(path_vertices) - 1)
 
             bat_start = ev.get("battery_before", 0)
-            bat_end = ev.get("battery_after", 0)
             total_leg_energy = ev.get("energy_kwh", 0)
             total_leg_dist = ev.get("distance_km", 0)
 
@@ -1043,8 +1534,8 @@ def build_simulation_steps(bnb_result: dict, cfg: dict, selected: list) -> list:
             for s_idx in range(n_segments):
                 seg_u = path_vertices[s_idx]
                 seg_v = path_vertices[s_idx + 1]
-                seg_dist = distance(seg_u, seg_v)
-                seg_energy = energy_for_leg(seg_dist, cfg["km_per_kwh"])
+                seg_dist = graph.distance(seg_u, seg_v)
+                seg_energy = energy_for_leg(seg_dist, eff)
                 next_bat = max(0.0, cur_bat - seg_energy)
 
                 dist_acc += seg_dist
@@ -1053,7 +1544,7 @@ def build_simulation_steps(bnb_result: dict, cfg: dict, selected: list) -> list:
                 step_type = "travel_segment"
                 is_last_segment = (s_idx == n_segments - 1)
                 is_transit = not is_last_segment
-                is_charger_node = seg_v in CHARGERS
+                is_charger_node = seg_v in graph.charger_ids
 
                 if is_last_segment and t == "delivery":
                     step_type = "delivery"
@@ -1068,13 +1559,11 @@ def build_simulation_steps(bnb_result: dict, cfg: dict, selected: list) -> list:
                     title = f"Arrive at Charger {u_to} (Scheduled Charging Stop)"
                     detail = (
                         f"Arrived at charging station {u_to}. Leg distance: {total_leg_dist:.2f} km. "
-                        f"Energy consumed: {total_leg_energy:.2f} kWh. "
-                        f"Battery on arrival: {soc_pct(next_bat, capacity):.1f}% ({next_bat:.2f} kWh). "
-                        f"Ready to recharge."
+                        f"Battery on arrival: {soc_pct(next_bat, capacity):.1f}% ({next_bat:.2f} kWh). Ready to charge."
                     )
                 elif is_last_segment and t == "finish":
                     step_type = "finish"
-                    title = f"Arrive at Hub (Complete)"
+                    title = f"Arrive at {u_to} (Complete)"
                     detail = (
                         f"Returned to ending {u_to}. All deliveries complete! "
                         f"Total distance: {dist_acc:.2f} km. "
@@ -1085,9 +1574,8 @@ def build_simulation_steps(bnb_result: dict, cfg: dict, selected: list) -> list:
                     detail = (
                         f"Driving road segment {seg_u} → {seg_v} ({seg_dist:.2f} km). "
                         f"{seg_v} is an intermediate road-network intersection on the shortest path to {u_to}. "
-                        f"Current battery is {soc_pct(next_bat, capacity):.1f}% ({next_bat:.2f} kWh), "
-                        f"strictly above the {cfg['threshold_pct']:.0f}% threshold ({capacity * cfg['threshold_pct'] / 100:.2f} kWh) "
-                        f"and safety reserve ({cfg['reserve_pct']:.0f}%), so no charging is performed at {seg_v}."
+                        f"Current battery is {soc_pct(next_bat, capacity):.1f}%, strictly above threshold; "
+                        f"no charging is performed at {seg_v}."
                     )
                 else:
                     title = f"Road Segment: {seg_u} → {seg_v} ({s_idx + 1}/{n_segments})"
@@ -1103,49 +1591,39 @@ def build_simulation_steps(bnb_result: dict, cfg: dict, selected: list) -> list:
                     "final_destination": u_to,
                     "target_destination": u_to,
                     "is_transit_waypoint": is_transit,
-                    "is_charging_stop": (t == "travel_to_charger" and is_last_segment),
-                    "segment": [seg_u, seg_v],
-                    "segment_index": s_idx + 1,
-                    "segment_count": n_segments,
+                    "is_charging_stop": (is_last_segment and t == "travel_to_charger"),
                     "title": title,
                     "detail": detail,
-                    "formula": (
-                        f"Segment energy = {seg_dist:.2f} km / {cfg['km_per_kwh']:.1f} km/kWh = {seg_energy:.2f} kWh | "
-                        f"Battery: {soc_pct(cur_bat, capacity):.1f}% → {soc_pct(next_bat, capacity):.1f}%"
-                    ),
-                    "distance_km": round(seg_dist, 3),
-                    "energy_kwh": round(seg_energy, 3),
+                    "formula": f"Energy = {seg_dist:.2f} km / {eff:.1f} km/kWh = {seg_energy:.2f} kWh | Battery: {soc_pct(cur_bat, capacity):.1f}% → {soc_pct(next_bat, capacity):.1f}%",
+                    "segment_distance_km": round(seg_dist, 3),
+                    "segment_energy_kwh": round(seg_energy, 3),
                     "battery_before_pct": soc_pct(cur_bat, capacity),
                     "battery_after_pct": soc_pct(next_bat, capacity),
                     "battery_kwh": round(next_bat, 4),
                     "battery_pct": soc_pct(next_bat, capacity),
                     "distance_so_far_km": round(dist_acc, 3),
                     "energy_so_far_kwh": round(energy_acc, 3),
-                    "dwell_ms": 2000 if is_last_segment else 300,
+                    "dwell_ms": 2000,
                 })
                 cur_bat = next_bat
 
-        # -------------------------------------------------------------------
-        # Charging step
-        # -------------------------------------------------------------------
         elif t == "charge":
-            ch_station = ev["station"]
+            ch_station = ev.get("station", "Charger")
             added = ev.get("added_kwh", 0)
             charge_min = ev.get("charge_minutes", 0)
-            bat_before = ev.get("battery_before", 0)
-            bat_after = ev.get("battery_after", capacity)
-            soc_before = ev.get("soc_before", soc_pct(bat_before, capacity))
+            soc_before = ev.get("soc_before", 0)
             soc_after = ev.get("soc_after", 100.0)
+            bat_after = ev.get("battery_after", capacity)
 
             steps.append({
                 "type": "charge",
                 "from": ch_station,
                 "to": ch_station,
-                "title": f"Charging at {ch_station}",
+                "title": f"Recharging at {ch_station} (+{added:.2f} kWh · {charge_min:.1f} min)",
                 "detail": (
-                    f"Charging at {ch_station} ({NODES[ch_station].get('rate_kw', cfg['charger_kw'])} kW charger). "
-                    f"Energy added: {added:.2f} kWh. Charging duration: {charge_min:.1f} min. "
-                    f"Battery: {soc_before:.1f}% ({bat_before:.2f} kWh) → {soc_after:.1f}% ({bat_after:.2f} kWh)."
+                    f"Charging at {ch_station} replenished {added:.2f} kWh in {charge_min:.1f} min. "
+                    f"Battery: {soc_before:.1f}% → {soc_after:.1f}% ({bat_after:.2f} kWh). "
+                    f"EV fully charged to 100% capacity."
                 ),
                 "formula": (
                     f"Charge time = {added:.2f} kWh / {cfg['charger_kw']:.0f} kW × 60 = {charge_min:.1f} min | "
@@ -1166,16 +1644,75 @@ def build_simulation_steps(bnb_result: dict, cfg: dict, selected: list) -> list:
     return steps
 
 
+def build_simulation_steps(bnb_result: dict, cfg: dict, selected_orders: list = None) -> list:
+    """Wrapper for backward compatibility with existing tests."""
+    return build_graph_simulation_steps(bnb_result.get("best_events", []), _DEFAULT_GRAPH, cfg)
+
+
+# ---------------------------------------------------------------------------
+# Route Comparison Logic
+# ---------------------------------------------------------------------------
+
+def compare_routes(baseline_res: dict, optimized_res: dict) -> dict:
+    """
+    Computes a rigorous, side-by-side comparison between Stage 1 (Baseline)
+    and Stage 2 (Optimized Branch & Bound).
+    """
+    b_met = baseline_res.get("metrics", {})
+    o_met = optimized_res.get("metrics", {})
+
+    b_dist = b_met.get("distance_km")
+    o_dist = o_met.get("distance_km")
+
+    if b_dist is not None and o_dist is not None:
+        dist_saved = round(b_dist - o_dist, 3)
+        pct_improvement = round((dist_saved / b_dist * 100.0), 2) if b_dist > 0 else 0.0
+    else:
+        dist_saved = None
+        pct_improvement = None
+
+    b_energy = b_met.get("energy_kwh")
+    o_energy = o_met.get("energy_kwh")
+    energy_saved = round(b_energy - o_energy, 3) if (b_energy is not None and o_energy is not None) else None
+
+    b_time = b_met.get("time_min")
+    o_time = o_met.get("time_min")
+    time_saved = round(b_time - o_time, 1) if (b_time is not None and o_time is not None) else None
+
+    return {
+        "baseline_distance_km": b_dist,
+        "optimized_distance_km": o_dist,
+        "distance_saved_km": dist_saved,
+        "percentage_improvement": pct_improvement,
+        "energy_saved_kwh": energy_saved,
+        "time_saved_min": time_saved,
+        "baseline_charges": len(baseline_res.get("charging_stops", [])),
+        "optimized_charges": len(optimized_res.get("charging_stops", [])),
+        "baseline_feasible": baseline_res.get("feasible", False),
+        "optimized_feasible": optimized_res.get("feasible", False),
+        "explored_states": optimized_res.get("explored_states"),
+        "pruned_states": optimized_res.get("pruned_states"),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Main Optimization Entrypoint
 # ---------------------------------------------------------------------------
 
 def optimize(payload: dict) -> dict:
     """Validate inputs, run Branch & Bound, and construct complete response."""
-    selected_ids = payload.get("order_ids", ["A", "B", "C"])
-    selected_ids = [x for x in selected_ids if x in ORDERS]
-    if not selected_ids:
-        raise ValueError("Select at least one delivery order.")
+    # Check if a custom network is provided
+    custom_net = payload.get("network")
+    if custom_net:
+        graph = NetworkGraph(custom_net)
+        delivery_nodes = graph.delivery_ids
+    else:
+        graph = _DEFAULT_GRAPH
+        selected_ids = payload.get("order_ids", ["A", "B", "C"])
+        selected_ids = [x for x in selected_ids if x in ORDERS]
+        if not selected_ids:
+            raise ValueError("Select at least one delivery order.")
+        delivery_nodes = [ORDERS[x]["destination"] for x in selected_ids]
 
     cfg = {
         "capacity_kwh":      float(payload.get("capacity_kwh", 40)),
@@ -1208,20 +1745,20 @@ def optimize(payload: dict) -> dict:
     if cfg["route_budget_km"] <= 0:
         raise ValueError("Route distance budget must be positive.")
 
-    selected = [ORDERS[x] for x in selected_ids]
-    order_nodes = [o["destination"] for o in selected]
-
     # Run Branch & Bound
-    bnb = branch_and_bound_with_charging(order_nodes, cfg)
+    bnb = branch_and_bound_with_charging(delivery_nodes, cfg, graph)
 
     if not bnb["feasible"]:
         reason = (
             "No feasible route exists: the EV cannot complete the selected deliveries "
-            "and reach the Hub without violating battery capacity or reserve constraints. "
+            f"and reach {graph.end_id} without violating battery capacity or reserve constraints. "
             "Consider increasing starting SOC, raising battery capacity, or lowering threshold."
         )
         return {
-            "nodes": NODES, "orders": selected, "chargers": CHARGERS, "config": cfg,
+            "network": graph.spec,
+            "nodes": graph.all_nodes,
+            "chargers": graph.charger_ids,
+            "config": cfg,
             "feasible": False,
             "infeasibility_reason": reason,
             "search_tree": bnb["search_tree"],
@@ -1229,18 +1766,19 @@ def optimize(payload: dict) -> dict:
             "pruned_states": bnb["pruned"],
             "metrics": {
                 "distance_km": None, "energy_kwh": None,
-                "orders_done": len(selected), "orders_total": len(ORDERS),
+                "orders_done": len(delivery_nodes), "orders_total": len(delivery_nodes),
                 "time_min": None, "charge_min": None,
-                "priority_score": sum(o["priority"] for o in selected),
+                "priority_score": 10,
                 "remaining_kwh": None, "feasible": False, "within_budget": False,
             },
             "steps": [],
             "simulation_steps": [],
             "charging_events": [],
-            "planned_route": ["Depot"],
+            "charging_stops": [],
+            "planned_route": [graph.start_id],
             "route_order": [],
             "bnb_distance_km": None,
-            "road_edges": ROAD_EDGES,
+            "road_edges": [(r["from"], r["to"]) for r in graph.spec["roads"]],
             "assumptions": _assumptions(),
         }
 
@@ -1252,20 +1790,18 @@ def optimize(payload: dict) -> dict:
         sum(e.get("charge_minutes", 0) for e in charging_events if e["type"] == "charge"), 1
     )
     remaining_kwh = charging_events[-1].get("battery_after", 0) if charging_events else 0
-    service_time = sum(o["service_min"] for o in selected)
+    service_time = len(delivery_nodes) * 4.0
     travel_time = total_dist / cfg["average_speed_kmh"] * 60.0
     total_time = round(travel_time + total_charge_min + service_time, 1)
     within_budget = total_dist <= cfg["route_budget_km"]
-    priority_score = sum(o["priority"] for o in selected)
 
-    sim_steps = build_simulation_steps(bnb, cfg, selected)
+    sim_steps = build_graph_simulation_steps(charging_events, graph, cfg)
 
-    n_charges = sum(1 for e in charging_events if e["type"] == "charge")
     explanation_steps = [
         {
             "title": "Validate inputs & Build Road Graph",
             "detail": (
-                f"{len(selected)} order(s) selected: {', '.join(o['name'] for o in selected)}. "
+                f"{len(delivery_nodes)} delivery location(s): {', '.join(delivery_nodes)}. "
                 f"Battery {cfg['capacity_kwh']:.1f} kWh at {cfg['soc_pct']:.0f}% SOC. "
                 f"Threshold: {cfg['threshold_pct']:.0f}% ({cfg['capacity_kwh'] * cfg['threshold_pct'] / 100:.2f} kWh). "
                 f"Reserve: {cfg['reserve_pct']:.0f}% ({cfg['capacity_kwh'] * cfg['reserve_pct'] / 100:.2f} kWh). "
@@ -1283,34 +1819,16 @@ def optimize(payload: dict) -> dict:
                 f"State = (current_loc, delivered_mask, battery_kwh). "
                 f"Transitions evaluate direct delivery if projected battery > threshold, "
                 f"or evaluate all reachable charging stations if projected battery ≤ threshold. "
-                f"Total candidate orderings: {len(selected)}! = {factorial(len(selected))}."
+                f"Total candidate orderings: {len(delivery_nodes)}! = {factorial(len(delivery_nodes))}."
             ),
-            "formula": "State = (u, delivered, bat) | Admissible LB = cost + min(u→rem) + MST(rem) + min(rem→Hub)"
+            "formula": f"State = (u, delivered, bat) | Admissible LB = cost + min(u→rem) + MST(rem) + min(rem→{graph.end_id})"
         },
         {
-            "title": "Search Tree Pruning",
+            "title": "Search Summary & Incumbent Pruning",
             "detail": (
-                f"Explored {bnb['explored']} states, pruned {bnb['pruned']} states. "
-                f"Branches whose lower-bound estimate equals or exceeds the best complete route cost "
-                f"are safely pruned without discarding any optimal solution."
-            ),
-            "formula": "Prune branch when: LB(node) ≥ best_cost"
-        },
-        {
-            "title": "Battery Threshold & Charging Decisions",
-            "detail": (
-                f"At each stop, the optimizer checks: projected battery after reaching the next delivery "
-                f"must remain strictly above {cfg['threshold_pct']:.0f}% SOC. "
-                f"Whenever projected battery is equal to or below threshold, reachable chargers are evaluated. "
-                f"The station providing the globally lowest-cost continuation is chosen."
-            ),
-            "formula": "Direct if: battery − E(cur, nxt) > threshold; else evaluate min-cost charger continuation"
-        },
-        {
-            "title": "Optimal Route Discovered",
-            "detail": (
-                f"Global minimum-distance route: Depot → {' → '.join(bnb['best_route'])} → Hub. "
-                f"Total travel distance: {total_dist:.2f} km with {n_charges} charging stop(s)."
+                f"Expanded {bnb['explored']} state(s); pruned {bnb['pruned']} sub-optimal or infeasible branch(es). "
+                f"Global minimum-cost feasible complete route: {' → '.join(planned_route)} "
+                f"covering {total_dist:.2f} km."
             ),
             "formula": f"Objective: min total travel distance = {total_dist:.2f} km"
         },
@@ -1318,8 +1836,8 @@ def optimize(payload: dict) -> dict:
             "title": "Final Schedule & Metrics",
             "detail": (
                 f"Route distance: {total_dist:.2f} km | Total time: {total_time:.1f} min "
-                f"(travel {travel_time:.1f} min + service {service_time} min + charging {total_charge_min:.1f} min). "
-                f"Battery remaining at Hub: {soc_pct(remaining_kwh, cfg['capacity_kwh']):.1f}%. "
+                f"(travel {travel_time:.1f} min + service {service_time:.0f} min + charging {total_charge_min:.1f} min). "
+                f"Battery remaining at {graph.end_id}: {soc_pct(remaining_kwh, cfg['capacity_kwh']):.1f}%. "
                 f"Budget status: {'Within budget ✓' if within_budget else '⚠ Exceeds budget'}."
             ),
             "formula": f"Time = ({total_dist:.2f} / {cfg['average_speed_kmh']:.0f}) × 60 + {service_time} + {total_charge_min:.1f} = {total_time:.1f} min"
@@ -1327,9 +1845,10 @@ def optimize(payload: dict) -> dict:
     ]
 
     return {
-        "nodes": NODES,
-        "orders": selected,
-        "chargers": CHARGERS,
+        "network": graph.spec,
+        "nodes": graph.all_nodes,
+        "orders": [{"id": d, "name": d, "destination": d} for d in delivery_nodes],
+        "chargers": graph.charger_ids,
         "config": cfg,
         "feasible": True,
         "route_order": bnb["best_route"],
@@ -1343,25 +1862,25 @@ def optimize(payload: dict) -> dict:
         "metrics": {
             "distance_km": total_dist,
             "energy_kwh": total_energy,
-            "orders_done": len(selected),
-            "orders_total": len(ORDERS),
+            "orders_done": len(delivery_nodes),
+            "orders_total": len(delivery_nodes),
             "time_min": total_time,
             "charge_min": total_charge_min,
-            "priority_score": priority_score,
+            "priority_score": 10,
             "remaining_kwh": round(remaining_kwh, 3),
             "feasible": True,
             "within_budget": within_budget,
         },
         "steps": explanation_steps,
         "simulation_steps": sim_steps,
-        "road_edges": ROAD_EDGES,
+        "road_edges": [(r["from"], r["to"]) for r in graph.spec["roads"]],
         "assumptions": _assumptions(),
     }
 
 
 def _assumptions() -> list:
     return [
-        "Road network is modeled as a connected graph G=(V,E) matching the simulated city map; all distances use Dijkstra shortest paths.",
+        "Road network is modeled as a weighted graph G=(V,E); all travel distances follow Dijkstra shortest paths.",
         "Branch & Bound jointly optimizes delivery sequencing and charging station visits in a single exact search.",
         "Battery threshold decision rule strictly prevents direct moves when projected battery ≤ threshold, triggering charger evaluations.",
         "Charging station recharge restores the vehicle to full capacity (100% SOC) at rated charger power, maximizing range for remaining deliveries.",
@@ -1377,10 +1896,61 @@ def _assumptions() -> list:
 def index():
     return render_template(
         "index.html",
+        sample_network=DEFAULT_SAMPLE_NETWORK,
         nodes=NODES,
         orders=list(ORDERS.values()),
         chargers=CHARGERS
     )
+
+
+@app.route("/api/sample_network", methods=["GET"])
+def api_sample_network():
+    return jsonify({
+        "network": DEFAULT_SAMPLE_NETWORK,
+        "config": {
+            "capacity_kwh": 40.0,
+            "soc_pct": 75.0,
+            "km_per_kwh": 6.0,
+            "average_speed_kmh": 30.0,
+            "charger_kw": 22.0,
+            "reserve_pct": 15.0,
+            "threshold_pct": 25.0,
+            "route_budget_km": 100.0,
+        }
+    })
+
+
+@app.route("/api/validate_network", methods=["POST"])
+def api_validate_network():
+    payload = request.get_json(force=True) or {}
+    spec = payload.get("network", payload)
+    res = validate_network_spec(spec)
+    return jsonify(res), (200 if res["valid"] else 400)
+
+
+@app.route("/api/baseline", methods=["POST"])
+def api_baseline():
+    try:
+        payload = request.get_json(force=True) or {}
+        custom_net = payload.get("network")
+        graph = NetworkGraph(custom_net) if custom_net else _DEFAULT_GRAPH
+
+        cfg = {
+            "capacity_kwh":      float(payload.get("capacity_kwh", 40)),
+            "soc_pct":           float(payload.get("soc_pct", 75)),
+            "km_per_kwh":        float(payload.get("km_per_kwh", 6)),
+            "average_speed_kmh": float(payload.get("average_speed_kmh", 30)),
+            "charger_kw":        float(payload.get("charger_kw", 22)),
+            "reserve_pct":       float(payload.get("reserve_pct", 15)),
+            "threshold_pct":     float(payload.get("threshold_pct", 25)),
+            "route_budget_km":   float(payload.get("route_budget_km", 100)),
+        }
+
+        order_seq = payload.get("order_sequence")
+        res = solve_baseline_route(graph, cfg, order_seq)
+        return jsonify(res)
+    except (ValueError, TypeError) as exc:
+        return jsonify({"error": str(exc)}), 400
 
 
 @app.route("/api/optimize", methods=["POST"])
@@ -1389,6 +1959,20 @@ def api_optimize():
         payload = request.get_json(force=True) or {}
         return jsonify(optimize(payload))
     except (ValueError, TypeError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/compare", methods=["POST"])
+def api_compare():
+    try:
+        payload = request.get_json(force=True) or {}
+        baseline_res = payload.get("baseline")
+        optimized_res = payload.get("optimized")
+        if not baseline_res or not optimized_res:
+            return jsonify({"error": "Both baseline and optimized results are required for comparison."}), 400
+        comp = compare_routes(baseline_res, optimized_res)
+        return jsonify(comp)
+    except Exception as exc:
         return jsonify({"error": str(exc)}), 400
 
 

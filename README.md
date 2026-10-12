@@ -1,51 +1,65 @@
 # VoltRoute — Optimal Delivery and Charging Planning for EV-Based Delivery Partners
 
-A Flask + HTML/CSS/JavaScript educational virtual working model for Design and Analysis of Algorithms (DAA).
+A Flask + HTML/CSS/JavaScript interactive educational working model for Design and Analysis of Algorithms (DAA).
 
-VoltRoute optimizes the multi-stop delivery sequence and charging schedule for an electric delivery partner. It uses **Branch & Bound** with an admissible **MST lower bound** for globally optimal sequencing and charging selection, paired with **Dijkstra's Algorithm** for road network shortest paths.
+VoltRoute is an **interactive two-stage EV delivery route and charging optimization simulator**. Users can configure their own custom road networks, start/end terminals, charging stations, and directional road connections. The application visualizes a baseline unoptimized route (**Stage 1**) alongside a globally optimal Branch & Bound route (**Stage 2**), complete with slow road-by-road animation, real-time battery telemetry, and a side-by-side comparative analysis.
 
 ---
 
 ## Key Features
 
-1. **Exact Joint Branch & Bound Optimization**:
-   - Searches for the globally minimum-distance feasible route starting at Depot, delivering every selected order exactly once, satisfying battery threshold and reserve constraints, visiting charging stations whenever necessary, and returning to Hub.
-   - Charging stops are evaluated **inside the Branch & Bound search state**, not in a disconnected post-processing step.
-   - Admissible lower bound using Prim's MST over road network distances guarantees mathematical global optimality.
+1. **User-Configurable Delivery Network (Requirement 2)**:
+   - **Delivery Locations**: Select from 1 to 10 delivery locations with custom IDs, names, and descriptions.
+   - **Custom Start & End Terminals**: Configurable start depot and ending hub with custom IDs and names.
+   - **Charging Stations**: Specify charging stations with individual IDs, names, and charging rates in kW.
+   - **Road Connections**: Weighted graph manager supporting bidirectional and one-way directed roads with distance validation.
+   - **Quick Actions**: "Load Sample Network", "Clear Network", and "Validate Network" with graph reachability checks.
 
-2. **Dijkstra's Algorithm on Road Network Graph**:
-   - Represents the simulated city as an undirected graph $G=(V, E)$ with 8 vertices (Depot, 3 Deliveries, 3 Chargers, Hub) and non-negative weighted road edges matching the visual street map.
-   - Computes exact road distances and vertex-by-vertex paths between any pair of stops.
+2. **Two-Stage Simulation Architecture (Requirements 3 & 4)**:
+   - **Stage 1 (Unoptimized Baseline)**:
+     - Visits delivery locations in user-entered order ($D_1 \to D_2 \to \dots \to D_n \to \text{Hub}$).
+     - Traverses shortest road paths using Dijkstra's algorithm.
+     - Inserts the nearest reachable charging station when projected battery $\le$ threshold or safety reserve is violated.
+   - **Stage 2 (Branch & Bound Global Optimization)**:
+     - Exact search over delivery permutations with integrated charging station detours.
+     - Prunes non-improving branches using an admissible Prim's Minimum Spanning Tree (MST) lower bound.
+     - Globally optimal charging stop selection minimizing complete continuation distance.
 
-3. **Battery Decision Rule & Threshold Policy**:
-   - At each stop, evaluates projected battery $B_{proj} = B - E(cur, nxt)$ before selecting the next destination.
-   - **Above Threshold ($B_{proj} > T$ and $B_{proj} \ge R$)**: Proceed directly.
-   - **At Threshold ($B_{proj} == T$)**: Direct travel rejected per threshold policy; evaluate reachable charging stations.
-   - **Below Threshold ($B_{proj} < T$)**: Direct travel rejected; evaluate reachable charging stations.
-   - **Insufficient Battery ($B_{proj} < R$)**: Cannot safely reach destination; evaluate reachable charging stations.
-   - Evaluates all reachable charging stations to select the station yielding the lowest-cost feasible continuation. Never chooses a charger purely for geographic proximity if it leads to a worse overall route.
+3. **Visual Route Comparison (Requirement 6)**:
+   - Displays side-by-side measured results:
+     - Delivery ordering and complete road path
+     - Number of charging stops and charging duration
+     - Total road distance (km) and distance saved ($d_{\text{baseline}} - d_{\text{optimized}}$)
+     - Percentage improvement: $100 \times (d_{\text{baseline}} - d_{\text{optimized}}) / d_{\text{baseline}}$
+     - Total energy consumed (kWh) and energy saved
+     - Travel time, charging time, and completion time
+     - Branch & Bound search states expanded vs. pruned
 
-4. **Paced, Controllable Road-Segment Animation**:
-   - Animates the EV moving along each individual road segment rather than jumping across the map.
-   - Three speed presets:
-     - **Slow**: ~4.0 seconds per road segment
-     - **Normal**: ~2.0 seconds per road segment (default)
-     - **Fast**: ~0.8 seconds per road segment
-   - Complete playback controls: **Start Simulation (Play)**, **Pause**, **Resume**, **Restart**, and **Next Step**.
-   - Visible progress indicator: `Step X of Y`.
-   - Gradual battery percentage animation decreasing during travel and increasing during charging.
-   - Brief pauses at deliveries and charging stations for readability.
-   - Simulation runs on demand when the user clicks Start Simulation; does not run immediately on page load.
+4. **Interactive Simulated Road Map (Requirement 7)**:
+   - Dynamic SVG rendering adapting to any user-defined network.
+   - Visual distinctions:
+     - Start terminal (▶), Ending hub (🏁)
+     - Delivery stops with sequence number badges (`1`, `2`, `3`)
+     - Scheduled charging stops with amber lightning badges (`⚡`)
+     - Intermediate road transit waypoints (no stop / no charge)
+     - Directional arrow markers for one-way roads
+     - Distance badges on all road connections
+   - Vehicle animated smoothly along actual road segments with controllable speeds:
+     - **Slow**: ~4.0s per road segment
+     - **Normal**: ~2.0s per road segment (default)
+     - **Fast**: ~0.8s per road segment
+   - Playback controls: Play, Pause, Resume, Restart, Previous Step, Next Step.
 
-5. **Rich Visualizations & Viva Guide**:
-   - Interactive animated SVG road map with delivery stop sequence badges (Stop 1, Stop 2, Stop 3).
-   - Dynamic Branch & Bound search tree showing expanded, pruned, and best complete nodes.
-   - Contextual Battery Decision card and battery event timeline.
-   - College viva reference section with time complexities and algorithm explanations.
+5. **Battery Decision Rule & Energy Accounting (Requirement 5D)**:
+   - Energy consumed on road leg: $E = d / \text{efficiency}$.
+   - Projected battery: $B_{\text{proj}} = B - E$.
+   - Safety reserve: $B_{\text{proj}} \ge R \times C_{\text{bat}}$.
+   - Battery threshold: If $B_{\text{proj}} \le T \times C_{\text{bat}}$, charging evaluation is triggered.
+   - Charging duration: $t_{\text{charge}} = (\Delta E / P_{\text{charger}}) \times 60\text{ min}$.
 
 ---
 
-## Running on Windows
+## Installation & Setup
 
 ### 1. Prerequisites
 - Python 3.10+ installed.
@@ -53,7 +67,7 @@ VoltRoute optimizes the multi-stop delivery sequence and charging schedule for a
 ### 2. Setup Virtual Environment
 Open PowerShell in the `VoltRoute_Flask` directory:
 ```powershell
-py -m venv .venv
+python -m venv .venv
 .venv\Scripts\activate
 ```
 
@@ -73,44 +87,67 @@ http://127.0.0.1:5000
 
 ---
 
-## Running Unit Tests
+## User Guide
 
-The test suite covers all 8 Acceptance Tests specified in the project requirements:
+### A. Configuring a Delivery Network
+1. In the sidebar under **Configure Delivery Network**, set your Start Depot ID (e.g. `Depot`) and End Hub ID (e.g. `Hub`).
+2. Select the number of delivery locations (1 to 10). Enter custom IDs (e.g. `Pharmacy`, `Office`, `Grocery`), names, and descriptions.
+3. Manage charging stations with custom IDs and kW power ratings.
+4. Add or remove road connections. Specify source, destination, distance in km, and whether the road is two-way or one-way.
+5. Click **Validate Network** to verify that all delivery nodes and terminals are reachable via Dijkstra shortest paths.
+
+### B. Running Stage 1: Unoptimized Baseline
+1. Click **Start Stage 1 Simulation**.
+2. Click **Play** or step forward with **Next Step**.
+3. Watch the EV navigate road segments in the order entered, displaying real-time battery depletion, distance, and charging stops.
+
+### C. Running Stage 2: Optimized Route
+1. Click **Start Stage 2 Simulation** (or click **Skip to Stage 2**).
+2. The Branch & Bound optimizer evaluates all permutations, prunes branches with the MST lower bound, and calculates the optimal schedule.
+3. Click **Play** or step through the optimal route animation.
+
+### D. Viewing Comparative Results
+1. Click the **Route Comparison** tab to inspect the side-by-side comparison table showing distance saved, percentage improvement, and energy economy.
+2. Click the **Branch & Bound Search Tree** tab to view the expanded, pruned, and optimal search tree nodes.
+3. Click the **Battery & Charging Schedule** tab for the event timeline.
+
+---
+
+## Testing
+
+The project contains 23 comprehensive acceptance unit tests covering graph algorithms, energy accounting, B&B search, and API validation:
+
 ```powershell
 python -m unittest discover -s tests -v
 ```
 
-### Acceptance Tests Verified:
-- **Test 1 — Enough battery**: Next delivery is feasible and battery remains strictly above threshold; proceeds directly.
-- **Test 2 — Threshold equality**: Projected battery equals threshold; direct travel rejected, charging route evaluated.
-- **Test 3 — Low battery**: Projected battery falls below threshold; optimizer selects minimum-cost charger continuation.
-- **Test 4 — Nearest charger is not best**: Nearest charger leads to a longer overall route; optimizer selects the better charger.
-- **Test 5 — All deliveries**: Every selected delivery visited exactly once, ending at Hub.
-- **Test 6 — Infeasible scenario**: No feasible route exists; reports clear reason without crashing.
-- **Test 7 — Slow animation & controls**: Validates speed presets and simulation step decomposition.
-- **Test 8 — Algorithm correctness**: Verified against exhaustive brute-force search over all order permutations.
-- **API & Validation**: Validates inputs, empty order sets, invalid battery capacities, threshold < reserve, and Dijkstra shortest paths.
+### Test Suite Coverage:
+- `test_1_enough_battery`: Vehicle proceeds directly when battery remains above threshold.
+- `test_2_threshold_equality`: Direct travel rejected when battery equals threshold.
+- `test_3_low_battery`: Evaluates chargers when projected battery falls below threshold.
+- `test_4_nearest_charger_is_not_best`: Optimizer avoids greedy nearest charger in favor of better global continuation.
+- `test_5_all_deliveries_visited_once`: Every delivery visited exactly once, ending at Hub.
+- `test_6_infeasible_scenario`: Infeasible battery/network scenarios reported with clear explanations.
+- `test_7_simulation_steps_and_speed_presets`: Granular road-segment decomposition and dwell time verification.
+- `test_8_algorithm_correctness_against_exhaustive_search`: Verifies Branch & Bound optimality against brute-force permutation search.
+- `test_9_vehicle_at_59_5_pct_direct_to_hub_feasible_no_charge`: EV at 59.5% battery visits CH-1 as transit waypoint only; 0 charges planned.
+- `test_10_charging_genuinely_necessary_with_complete_selection_reason`: Verifies complete selection reason metrics when charging is necessary.
+- `test_11_unreachable_charger_never_selected`: Unreachable chargers violating safety reserve are rejected.
+- `test_12_user_defined_network_and_custom_nodes`: Custom start, end, deliveries, chargers, and roads validated and solved.
+- `test_13_oneway_and_bidirectional_connections`: Directionality respected on one-way road segments.
+- `test_14_disconnected_network_rejected`: Unreachable/disconnected graphs detected and rejected.
+- `test_15_stage1_baseline_route_generation_and_simulation`: Baseline route generation and simulation telemetry verified.
+- `test_16_route_comparison_calculation`: Route distance saved and percentage improvement formulas verified.
+- `test_17_charging_duration_and_amount`: Charging duration formula verified.
+- Input validation tests: rejection of empty orders, invalid battery capacity, negative budgets, and threshold < reserve.
 
 ---
 
-## Algorithms & Theoretical Summary
+## API Endpoints
 
-### A. Branch and Bound
-- **State Representation**: `(current_location, delivered_orders_mask, battery_kWh)`
-- **Priority Queue**: Min-heap ordered by admissible lower bound $f = \text{cost\_so\_far} + \text{LB}$.
-- **Lower Bound Formula**:
-  $$\text{LB} = \min_{r \in \text{rem}} d(u, r) + \text{MST}(\text{rem}) + \min_{r \in \text{rem}} d(r, \text{Hub})$$
-- **Admissibility**: Because every valid completion must leave $u$, span all remaining deliveries, and enter Hub, MST is guaranteed to be $\le$ true completion cost. Branches with $\text{LB} \ge \text{best\_cost}$ are safely pruned.
-
-### B. Dijkstra's Algorithm
-- Operates on non-negative weighted graph $G = (V, E)$ using a priority queue.
-- Computes shortest road distances and exact vertex paths animated segment by segment.
-- Time Complexity: $O((V + E) \log V)$.
-
-### C. Battery Constraints
-- $B$: Current battery energy (kWh)
-- $T$: Configured battery threshold ($C \times T_{\%} / 100$)
-- $R$: Configured safety reserve ($C \times R_{\%} / 100$)
-- $E(i, j) = \text{distance}(i, j) / \text{efficiency}$
-- Direct travel allowed if and only if $B - E(i, j) > T$ and $B - E(i, j) \ge R$.
-- At charging stops, EV replenishes to full capacity (100% SOC) at rated charger power.
+- `GET /api/sample_network`: Returns the default sample network specification and vehicle settings.
+- `POST /api/validate_network`: Validates a user-defined network specification and checks graph reachability.
+- `POST /api/baseline`: Computes the Stage 1 baseline route, simulation steps, and metrics.
+- `POST /api/optimize`: Computes the Stage 2 Branch & Bound optimal route, search tree, simulation steps, and metrics.
+- `POST /api/compare`: Computes side-by-side comparative metrics between baseline and optimized results.
+- `GET /api/health`: Healthcheck endpoint.

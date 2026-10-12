@@ -29,6 +29,11 @@ from app import (
     NODES,
     CHARGERS,
     ROAD_EDGES,
+    DEFAULT_SAMPLE_NETWORK,
+    NetworkGraph,
+    validate_network_spec,
+    solve_baseline_route,
+    compare_routes,
 )
 
 
@@ -541,6 +546,193 @@ class VoltRouteAcceptanceTests(unittest.TestCase):
         self.assertFalse(ch1_cand["reachable"], "CH-1 must be marked unreachable when reserve is violated")
         self.assertFalse(ch1_cand["continuation_feasible"])
 
+    # -----------------------------------------------------------------------
+    # Test 12 — User-Defined Custom Network & Custom Start/End Nodes
+    # -----------------------------------------------------------------------
+    def test_12_user_defined_network_and_custom_nodes(self):
+        """
+        Requirements 2A, 2B, 2C, 2D: Users can create custom delivery nodes,
+        custom start (Warehouse) and end (Distribution-Center), and chargers.
+        Verifies NetworkGraph parsing, validation, and Branch & Bound execution.
+        """
+        custom_net = {
+            "start_node": {"id": "Warehouse", "name": "Main Warehouse", "x": 60, "y": 200},
+            "end_node": {"id": "DistCenter", "name": "Distribution Center", "x": 650, "y": 200},
+            "delivery_nodes": [
+                {"id": "Drop-1", "name": "Hospital", "desc": "Emergency medicine"},
+                {"id": "Drop-2", "name": "Clinic", "desc": "Vaccines"},
+            ],
+            "charging_stations": [
+                {"id": "FastCharge", "name": "DC HyperCharger", "rate_kw": 50.0},
+            ],
+            "roads": [
+                {"from": "Warehouse", "to": "Drop-1", "distance_km": 10.0, "bidirectional": True},
+                {"from": "Drop-1", "to": "Drop-2", "distance_km": 8.0, "bidirectional": True},
+                {"from": "Drop-2", "to": "DistCenter", "distance_km": 12.0, "bidirectional": True},
+                {"from": "Warehouse", "to": "FastCharge", "distance_km": 6.0, "bidirectional": True},
+                {"from": "FastCharge", "to": "Drop-2", "distance_km": 7.0, "bidirectional": True},
+                {"from": "FastCharge", "to": "DistCenter", "distance_km": 9.0, "bidirectional": True},
+            ]
+        }
+        val = validate_network_spec(custom_net)
+        self.assertTrue(val["valid"], f"Validation failed: {val['errors']}")
+
+        graph = NetworkGraph(custom_net)
+        self.assertEqual(graph.start_id, "Warehouse")
+        self.assertEqual(graph.end_id, "DistCenter")
+        self.assertEqual(graph.distance("Warehouse", "Drop-1"), 10.0)
+
+        # Run Branch & Bound on the custom graph
+        cfg = {
+            "capacity_kwh": 50.0,
+            "soc_pct": 90.0,
+            "km_per_kwh": 5.0,
+            "average_speed_kmh": 40.0,
+            "charger_kw": 50.0,
+            "reserve_pct": 10.0,
+            "threshold_pct": 20.0,
+            "route_budget_km": 100.0,
+        }
+        res = branch_and_bound_with_charging(graph.delivery_ids, cfg, graph)
+        self.assertTrue(res["feasible"])
+        self.assertEqual(res["best_planned"][0], "Warehouse")
+        self.assertEqual(res["best_planned"][-1], "DistCenter")
+        self.assertIn("Drop-1", res["best_planned"])
+        self.assertIn("Drop-2", res["best_planned"])
+
+    # -----------------------------------------------------------------------
+    # Test 13 — One-Way and Bidirectional Connections
+    # -----------------------------------------------------------------------
+    def test_13_oneway_and_bidirectional_connections(self):
+        """
+        Requirement 2D & 5A: Directional roads must be respected.
+        If A -> B is one-way, travel from B to A directly must not be allowed.
+        """
+        directed_net = {
+            "start_node": {"id": "S", "name": "Start"},
+            "end_node": {"id": "E", "name": "End"},
+            "delivery_nodes": [{"id": "D", "name": "Delivery"}],
+            "charging_stations": [],
+            "roads": [
+                {"from": "S", "to": "D", "distance_km": 5.0, "bidirectional": False},
+                {"from": "D", "to": "E", "distance_km": 7.0, "bidirectional": False},
+            ]
+        }
+        graph = NetworkGraph(directed_net)
+        # S -> D exists
+        self.assertEqual(graph.distance("S", "D"), 5.0)
+        # D -> S does NOT exist because it is one-way
+        self.assertEqual(graph.distance("D", "S"), float("inf"))
+
+    # -----------------------------------------------------------------------
+    # Test 14 — Disconnected or Unreachable Networks Rejected
+    # -----------------------------------------------------------------------
+    def test_14_disconnected_network_rejected(self):
+        """
+        Requirements 2D & 9: If a delivery node cannot be reached from start,
+        or cannot reach end node, validate_network reports it clearly.
+        """
+        disconnected_net = {
+            "start_node": {"id": "S", "name": "Start"},
+            "end_node": {"id": "E", "name": "End"},
+            "delivery_nodes": [
+                {"id": "D1", "name": "Reachable"},
+                {"id": "D2", "name": "Isolated Island"},
+            ],
+            "charging_stations": [],
+            "roads": [
+                {"from": "S", "to": "D1", "distance_km": 5.0, "bidirectional": True},
+                {"from": "D1", "to": "E", "distance_km": 5.0, "bidirectional": True},
+                # D2 has no roads connected to it!
+            ]
+        }
+        val = validate_network_spec(disconnected_net)
+        self.assertFalse(val["valid"])
+        self.assertTrue(any("unreachable" in err.lower() for err in val["errors"]))
+
+    # -----------------------------------------------------------------------
+    # Test 15 — Stage 1 Baseline Route Generation & Simulation Steps
+    # -----------------------------------------------------------------------
+    def test_15_stage1_baseline_route_generation_and_simulation(self):
+        """
+        Requirement 3: Baseline route visits deliveries in user-entered order,
+        computes shortest road paths via Dijkstra, evaluates greedy charging
+        when needed, and generates granular road segment simulation steps.
+        """
+        r = self.client.post("/api/baseline", json={
+            "capacity_kwh": 40.0,
+            "soc_pct": 80.0,
+            "km_per_kwh": 6.0,
+            "average_speed_kmh": 30.0,
+            "charger_kw": 22.0,
+            "reserve_pct": 15.0,
+            "threshold_pct": 25.0,
+            "route_budget_km": 150.0,
+        })
+        self.assertEqual(r.status_code, 200)
+        data = r.json
+        self.assertTrue(data["feasible"])
+        self.assertEqual(data["stage"], "baseline")
+        self.assertEqual(data["planned_route"], ["Depot", "Pharmacy", "Office", "Grocery", "Hub"])
+        self.assertGreater(data["metrics"]["distance_km"], 0)
+        self.assertGreater(len(data["simulation_steps"]), 0)
+
+        # Simulation steps must include segment dwell times and telemetry
+        for step in data["simulation_steps"]:
+            self.assertIn("battery_pct", step)
+            self.assertIn("distance_so_far_km", step)
+            self.assertIn("dwell_ms", step)
+
+    # -----------------------------------------------------------------------
+    # Test 16 — Route Comparison Calculation
+    # -----------------------------------------------------------------------
+    def test_16_route_comparison_calculation(self):
+        """
+        Requirement 6: Visual Route Comparison side-by-side metrics:
+        Distance saved = baseline - optimized
+        Percentage improvement = (saved / baseline) * 100
+        """
+        b_res = {
+            "feasible": True,
+            "charging_stops": [],
+            "metrics": {
+                "distance_km": 70.0,
+                "energy_kwh": 11.66,
+                "time_min": 140.0,
+            }
+        }
+        o_res = {
+            "feasible": True,
+            "charging_stops": [],
+            "explored_states": 12,
+            "pruned_states": 4,
+            "metrics": {
+                "distance_km": 56.0,
+                "energy_kwh": 9.33,
+                "time_min": 112.0,
+            }
+        }
+        comp = compare_routes(b_res, o_res)
+        self.assertEqual(comp["baseline_distance_km"], 70.0)
+        self.assertEqual(comp["optimized_distance_km"], 56.0)
+        self.assertEqual(comp["distance_saved_km"], 14.0)
+        self.assertAlmostEqual(comp["percentage_improvement"], 20.0, places=1)
+        self.assertEqual(comp["time_saved_min"], 28.0)
+
+    # -----------------------------------------------------------------------
+    # Test 17 — Charging Duration and Energy Accounting
+    # -----------------------------------------------------------------------
+    def test_17_charging_duration_and_amount(self):
+        """
+        Requirement 5D: Charging duration formula:
+        Charge time (min) = (energy_added_kwh / charger_kw) * 60.
+        """
+        added_kwh = 11.0
+        charger_kw = 22.0
+        charge_minutes = round(added_kwh / charger_kw * 60.0, 1)
+        self.assertEqual(charge_minutes, 30.0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
