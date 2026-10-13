@@ -173,6 +173,8 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .tool-hint { font-size: 12.5px; color: var(--muted); }
 .lab-query { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
 .lab-query select { width: auto; padding: 5px 8px; font-size: 13px; }
+.lab-note { margin: 10px 16px 0; font-size: 13px; color: var(--muted); }
+.lab-note b { color: var(--text); font-weight: 600; }
 .map-wrap {
   position: relative;
   margin: 12px 16px 0; border: 1px solid var(--border); border-radius: 10px;
@@ -229,7 +231,8 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .ev text { fill: #fff; font-size: 9px; font-weight: 700; text-anchor: middle; }
 
 /* ── Dijkstra lab on the map ── */
-#map.lab .plan-line, #map.lab .drive-line, #map.lab .ev, #map.lab .badge { display: none; }
+#map.lab .drive-line, #map.lab .ev { display: none; }
+#map.lab .plan-line { opacity: .35; }
 #map.lab .node.junction .label { display: block; font-size: 10.5px; fill: var(--muted); font-weight: 500; }
 #map.lab .node circle, #map.lab .node rect { fill: var(--node); stroke: var(--lab-idle); stroke-width: 2; stroke-dasharray: none; }
 #map.lab .node .glyph, #map.lab .node .bolt { fill: var(--lab-idle); }
@@ -249,6 +252,9 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .lab-try { stroke: var(--lab-focus); stroke-width: 6; stroke-linecap: round; }
 .lab-try.worse { stroke: var(--muted); stroke-dasharray: 6 6; stroke-width: 4; }
 .lab-path { fill: none; stroke: var(--lab-focus); stroke-width: 7; stroke-linecap: round; stroke-linejoin: round; opacity: .9; }
+.lab-path.draw { stroke-dasharray: var(--len); stroke-dashoffset: var(--len); animation: draw-path 1.4s ease-in-out forwards; }
+@keyframes draw-path { to { stroke-dashoffset: 0; } }
+.lab-pick { display: contents; }
 .lab-dist { font-size: 11.5px; font-weight: 700; }
 .lab-dist.tent { fill: var(--lab-tent); }
 .lab-dist.final { fill: var(--lab-final); }
@@ -510,10 +516,14 @@ main.fs .toolbar .edit-tools { display: none; }
         </div>
         <div class="toolbar">
           <div class="lab-query" id="labQuery" hidden>
-            <label for="labFrom">Shortest roads from</label>
-            <select id="labFrom"></select>
-            <label for="labTo">to</label>
-            <select id="labTo"></select>
+            <label for="labLeg">Route leg</label>
+            <select id="labLeg"></select>
+            <span class="lab-pick" id="labPick">
+              <label for="labFrom">· shortest roads from</label>
+              <select id="labFrom"></select>
+              <label for="labTo">to</label>
+              <select id="labTo"></select>
+            </span>
           </div>
           <div class="edit-tools">
             <button class="btn" data-tool="delivery" title="Click the map to add a delivery stop">+ Delivery stop</button>
@@ -525,6 +535,7 @@ main.fs .toolbar .edit-tools { display: none; }
           </div>
           <span class="tool-hint" id="toolHint"></span>
         </div>
+        <p class="lab-note" id="labNote" hidden></p>
         <div class="banner" id="banner" hidden></div>
         <div class="map-wrap" id="mapWrap">
           <svg id="map" role="img" aria-label="City map"></svg>
@@ -585,7 +596,7 @@ main.fs .toolbar .edit-tools { display: none; }
           <div>
             <h3>Priority queue (min-heap)</h3>
             <div id="labQueue"></div>
-            <h3>Targets</h3>
+            <h3 id="labTargetsTitle">Targets</h3>
             <div id="labTargets"></div>
           </div>
         </div>
@@ -1003,6 +1014,34 @@ function setPlan(data) {
 }
 
 /* ───────── Dijkstra lab ───────── */
+// Each drive in the planned route is one Dijkstra query: shortest roads from → to.
+// "all" plays every leg in turn, so the whole route ends up drawn in orange.
+let labLeg = "all";   // "all" | index into routeLegs() | "custom" (From/To picked by hand)
+const routeLegs = () => (plan && plan.feasible ? plan.events.filter(e => e.type === "travel") : []);
+
+function fillLegSelect() {
+  const legs = routeLegs();
+  // with no route yet (or none feasible) keep the choice for later, but show "Other"
+  const choice = !legs.length || labLeg === "custom" ? "custom"
+    : labLeg === "all" ? "all" : Math.min(labLeg, legs.length - 1);
+  if (choice !== "custom") labLeg = choice;
+  $("labLeg").innerHTML =
+    (legs.length ? `<option value="all">Whole route (all ${legs.length} legs)</option>` : "")
+    + legs.map((e, i) =>
+      `<option value="${i}">${i + 1}. ${esc(e.from)} → ${esc(e.to)}${e.purpose === "charge" ? " (to charge)" : ""}</option>`).join("")
+    + `<option value="custom">Other: choose places</option>`;
+  $("labLeg").value = String(choice);
+  $("labPick").hidden = choice === "all";
+  if (typeof choice === "number") {
+    $("labFrom").value = legs[choice].from;
+    $("labTo").value = legs[choice].to;
+  }
+  const order = plan && plan.feasible ? ["Depot", ...plan.delivery_order, "Hub"].join(" → ") : null;
+  $("labNote").innerHTML = order
+    ? `Your delivery route is <b>${esc(order)}</b> (faint dotted line). Branch &amp; Bound chose that order; Dijkstra finds the roads for each leg.`
+    : `There is no feasible delivery route right now, so pick any two places to compare.`;
+}
+
 function fillLabSelects() {
   const names = Object.keys(graph.nodes);
   const order = n => ["depot", "delivery", "charger", "hub", "junction"].indexOf(graph.nodes[n].kind);
@@ -1013,13 +1052,18 @@ function fillLabSelects() {
     + names.map(n => `<option>${esc(n)}</option>`).join("");
   $("labFrom").value = graph.nodes[from] ? from : "Depot";
   $("labTo").value = to.startsWith("*") || graph.nodes[to] ? to : "Hub";
+  fillLegSelect();
 }
 
-function labTargets() {
+function labQueries() {
+  const legs = routeLegs();
+  if (labLeg === "all" && legs.length) return legs.map(e => ({ source: e.from, targets: [e.to] }));
+  if (typeof labLeg === "number" && legs[labLeg]) return [{ source: legs[labLeg].from, targets: [legs[labLeg].to] }];
   const to = $("labTo").value;
-  if (to === "*chargers") return Object.keys(graph.nodes).filter(n => graph.nodes[n].kind === "charger");
-  if (to === "*all") return [];  // empty = run until the queue is empty
-  return [to];
+  const targets = to === "*chargers" ? Object.keys(graph.nodes).filter(n => graph.nodes[n].kind === "charger")
+    : to === "*all" ? []   // empty = run until the queue is empty
+    : [to];
+  return [{ source: $("labFrom").value, targets }];
 }
 
 let labRequest = 0;
@@ -1027,12 +1071,16 @@ async function runLab(autoplay = false) {
   const id = ++labRequest;
   try {
     const data = await postJSON("/api/dijkstra", {
-      source: $("labFrom").value, targets: labTargets(),
-      custom_nodes: customNodes, closed_roads: closedRoads,
+      queries: labQueries(), custom_nodes: customNodes, closed_roads: closedRoads,
     });
     if (id !== labRequest) return;
-    lab = data;
-    if (!lab.targets.length) lab.targets = Object.keys(graph.nodes).filter(n => n !== lab.source);
+    // flatten the legs into one list of steps; each step remembers its leg
+    lab = { legs: data.legs, steps: [], starts: [] };
+    data.legs.forEach((L, k) => {
+      if (!L.targets.length) L.targets = Object.keys(graph.nodes).filter(n => n !== L.source);
+      lab.starts.push(lab.steps.length);
+      L.steps.forEach(s => lab.steps.push({ ...s, leg: k }));
+    });
     pos.lab = { fi: 0, fp: 1 };
     if (mode === "lab") { enterPosition(); if (autoplay) play(); }
   } catch (err) {
@@ -1041,10 +1089,11 @@ async function runLab(autoplay = false) {
   }
 }
 
-// Replay the trace up to step i to get the state the algorithm was in.
+// Replay the current leg's trace up to step i to get the state the algorithm was in.
 function labState(i) {
-  const st = { dist: {}, prev: {}, final: new Set(), heap: [], relaxed: 0 };
-  for (let k = 0; k <= i; k++) {
+  const leg = lab.steps[i].leg;
+  const st = { leg, dist: {}, prev: {}, final: new Set(), heap: [], relaxed: 0 };
+  for (let k = lab.starts[leg]; k <= i; k++) {
     const s = lab.steps[k];
     if (s.t === "start") {
       st.dist[s.node] = 0;
@@ -1064,7 +1113,7 @@ function labState(i) {
   }
   st.heap.sort((a, b) => a.d - b.d || a.node.localeCompare(b.node));
   // the node currently being expanded = last popped node at or before i
-  for (let k = i; k >= 0; k--) {
+  for (let k = i; k >= lab.starts[leg]; k--) {
     const s = lab.steps[k];
     if (s.t === "pop" || s.t === "start") { st.focus = s.node; break; }
   }
@@ -1074,31 +1123,40 @@ function labState(i) {
 
 const STAGE = { start: "start", pop: "choose", stale: "choose", relax: "compare", done: "result" };
 
+// an orange route; `animate` draws it from start to end
+function drawPath(path, parent, animate) {
+  const pts = path.map(n => graph.nodes[n]);
+  const len = pts.slice(1).reduce((s, p, k) => s + Math.hypot(p.x - pts[k].x, p.y - pts[k].y), 0);
+  const el = svg("polyline", { class: `lab-path${animate ? " draw" : ""}`, points: pointsAttr(pts) }, parent);
+  if (animate) el.style.setProperty("--len", Math.ceil(len) + 1);
+}
+
 function renderLab() {
   if (!lab) return;
   const i = Math.min(pos.lab.fi, lab.steps.length - 1);
   const st = labState(i);
+  const L = lab.legs[st.leg];
   const s = st.step, N = graph.nodes;
   const under = $("labUnder"), over = $("labOver");
   under.replaceChildren(); over.replaceChildren();
   const done = s.t === "done";
 
-  // roads in the shortest-path tree so far
+  // routes of the legs already finished stay orange
+  for (let k = 0; k < st.leg; k++) {
+    for (const r of Object.values(lab.legs[k].results)) if (r) drawPath(r.path, under, false);
+  }
+  // roads in the current shortest-path tree
   for (const [v, u] of Object.entries(st.prev)) {
     svg("line", { class: `lab-tree${st.final.has(v) ? " final" : ""}`, x1: N[u].x, y1: N[u].y, x2: N[v].x, y2: N[v].y }, under);
   }
-  // final routes to the targets
-  if (done) {
-    for (const r of Object.values(lab.results)) {
-      if (r) svg("polyline", { class: "lab-path", points: pointsAttr(r.path.map(n => N[n])) }, under);
-    }
-  }
+  // this leg's answer, drawn in when the search finishes
+  if (done) for (const r of Object.values(L.results)) if (r) drawPath(r.path, under, true);
   // the road being tried right now
   if (s.t === "relax") {
     const a = N[s.from], b = N[s.to];
     svg("line", { class: `lab-try${s.better ? "" : " worse"}`, x1: a.x, y1: a.y, x2: b.x, y2: b.y }, under);
     weightLabel(s.from, s.to, s.w, over);
-  } else if (s.t === "pop" && !done) {
+  } else if (s.t === "pop") {
     for (const [v, w] of Object.entries(neighbours(s.node))) if (!st.final.has(v)) weightLabel(s.node, v, w, over);
   }
 
@@ -1109,8 +1167,8 @@ function renderLab() {
   }
   for (const [name, n] of Object.entries(N)) {
     const r = n.kind === "junction" ? 9 : 19;
-    if (lab.targets.includes(name) && lab.targets.length <= 8) svg("circle", { class: "lab-target", cx: n.x, cy: n.y, r: r + 4 }, over);
-    if (name === lab.source) svg("circle", { class: "lab-ring", cx: n.x, cy: n.y, r: r + 8 }, over);
+    if (L.targets.includes(name) && L.targets.length <= 8) svg("circle", { class: "lab-target", cx: n.x, cy: n.y, r: r + 4 }, over);
+    if (name === L.source) svg("circle", { class: "lab-ring", cx: n.x, cy: n.y, r: r + 8 }, over);
     if (name in st.dist) {
       const t = svg("text", { class: `lab-dist ${st.final.has(name) ? "final" : "tent"}`, x: n.x, y: n.y - r - 4 }, over);
       t.textContent = st.dist[name].toFixed(1);
@@ -1118,17 +1176,20 @@ function renderLab() {
   }
 
   // panel
+  const multi = lab.legs.length > 1;
   document.querySelectorAll("#labStages span").forEach(sp => {
     const order = ["start", "choose", "compare", "result"];
     sp.classList.toggle("on", sp.dataset.stage === STAGE[s.t]);
     sp.classList.toggle("past", order.indexOf(sp.dataset.stage) < order.indexOf(STAGE[s.t]));
   });
-  $("labExplain").innerHTML = explainStep(s, st);
-  $("labStats").textContent =
-    `${st.final.size} of ${Object.keys(N).length} places final · ${st.heap.length} entries in the queue · ${st.relaxed} roads compared`;
+  $("labExplain").innerHTML = explainStep(s, st, L);
+  $("labStats").textContent = (multi ? `Leg ${st.leg + 1} of ${lab.legs.length} · ` : "")
+    + `${st.final.size} of ${Object.keys(N).length} places final · ${st.heap.length} in the queue · ${st.relaxed} roads compared`;
   renderQueue(st);
-  renderTargets(st, done);
-  $("status").textContent = `Dijkstra from ${lab.source}`;
+  multi ? renderLegs(st, done) : renderTargets(st, done, L);
+  $("status").textContent = multi
+    ? `Dijkstra · leg ${st.leg + 1} of ${lab.legs.length}: ${L.source} → ${L.targets[0]}`
+    : `Dijkstra from ${L.source}`;
   $("scrub").value = i;
   $("stepCount").textContent = `${i + 1} / ${lab.steps.length}`;
 }
@@ -1148,17 +1209,19 @@ function weightLabel(a, b, w, parent) {
   svg("text", { class: "lab-weight", x: (A.x + B.x) / 2, y: (A.y + B.y) / 2 - 6 }, parent).textContent = `${w.toFixed(1)} km`;
 }
 
-function explainStep(s, st) {
+function explainStep(s, st, L) {
   const b = x => `<b>${esc(x)}</b>`;
+  const multi = lab.legs.length > 1;
   switch (s.t) {
     case "start":
-      return `Start at ${b(lab.source)}. Its distance is ${b("0 km")}; every other place is ∞ because we haven't found a road to it yet. ${b(lab.source)} goes into the priority queue.`;
+      return (multi ? `${b(`Leg ${st.leg + 1} of ${lab.legs.length}: ${L.source} → ${L.targets[0]}`)}. Dijkstra starts afresh for every leg. ` : "")
+        + `Start at ${b(L.source)}. Its distance is ${b("0 km")}; every other place is ∞ because we haven't found a road to it yet. ${b(L.source)} goes into the priority queue.`;
     case "pop": {
-      let txt = s.node === lab.source
+      let txt = s.node === L.source
         ? `${b(s.node)} is the only entry in the queue, so take it out. Its distance (${b("0 km")}) is ${b("final")}.`
         : `The queue's smallest entry is ${b(s.node)} at ${b(km(s.d))}. Everything else in the queue is at least as far, so no shorter way to ${b(s.node)} can exist: its distance is now ${b("final")}.`;
-      if (lab.targets.includes(s.node) && s.node !== lab.source) txt += ` ${b(s.node)} is one of the targets.`;
-      const next = lab.steps[lab.steps.indexOf(s) + 1];
+      if (L.targets.includes(s.node) && s.node !== L.source) txt += ` ${b(s.node)} is ${L.targets.length > 1 ? "one of the targets" : "the target"}.`;
+      const next = lab.steps[pos.lab.fi + 1];
       if (next && next.t === "relax") txt += ` Next, try each road leaving ${b(s.node)}.`;
       return txt;
     }
@@ -1172,9 +1235,23 @@ function explainStep(s, st) {
         : `Road ${b(s.from)} → ${b(s.to)} is ${km(s.w)}. Going this way: ${sum}, which is not shorter than ${old}. Keep ${old}.`;
     }
     case "done": {
-      const found = Object.entries(lab.results).filter(([, r]) => r);
+      const found = Object.entries(L.results).filter(([, r]) => r);
       if (!found.length) return `The queue is empty and no target was reached: every road leading there is closed.`;
-      let txt = `Done after ${lab.steps.length - 1} steps. Shortest road distances are known for ${found.length} of ${lab.targets.length} target${lab.targets.length > 1 ? "s" : ""}; the thick lines are the routes.`;
+      const stillQueued = st.heap.length;
+      if (multi) {
+        const [t, r] = found[0];
+        let txt = `Leg ${st.leg + 1} of ${lab.legs.length} done: ${b(`${L.source} → ${t}`)} is ${b(km(r.km))} by road (orange). `
+          + `Dijkstra stops as soon as ${b(t)} is final: nothing still in the queue can make it shorter.`;
+        if (st.leg === lab.legs.length - 1) {
+          const total = lab.legs.reduce((sum, Lg) => sum + (Object.values(Lg.results)[0]?.km || 0), 0);
+          txt = `All ${lab.legs.length} legs done. The orange line is the whole delivery route; adding up the legs gives ${b(km(total))}, the route's total distance.`;
+        }
+        return txt;
+      }
+      let txt = `Done after ${L.steps.length - 1} steps; the orange line is the shortest route.`;
+      if (L.targets.length === 1 && stillQueued) {
+        txt += ` Dijkstra stops as soon as ${b(L.targets[0])} is final. The ${stillQueued} entr${stillQueued > 1 ? "ies" : "y"} still in the queue can't make it shorter, so the rest of the map isn't needed. Choose "every place" to run it to the end.`;
+      }
       if (found.length > 1) {
         const byRoad = found.reduce((a, c) => (c[1].km < a[1].km ? c : a));
         const byAir = found.reduce((a, c) => (c[1].straight_km < a[1].straight_km ? c : a));
@@ -1201,20 +1278,35 @@ function renderQueue(st) {
     }).join("")}${st.heap.length > shown.length ? `<tr><td colspan="3" class="no">+ ${st.heap.length - shown.length} more</td></tr>` : ""}</tbody></table>`;
 }
 
-function renderTargets(st, done) {
-  const list = lab.targets.slice(0, 8);
+function renderTargets(st, done, L) {
+  $("labTargetsTitle").textContent = "Targets";
+  const list = L.targets.slice(0, 8);
   $("labTargets").innerHTML = `<table class="res"><thead><tr><th>Target</th><th>Straight line</th><th>By road</th></tr></thead><tbody>${
     list.map(t => {
-      const r = lab.results[t];
+      const r = L.results[t];
       const straight = r ? km(r.straight_km) : "—";
       const d = st.dist[t];
       const cls = st.final.has(t) ? "final" : d !== undefined ? "tent" : "";
       const road = d !== undefined ? km(d) : done ? "unreachable" : "∞";
       return `<tr><td>${esc(t)}</td><td>${straight}</td><td class="${cls}">${road}</td></tr>`;
-    }).join("")}${lab.targets.length > list.length ? `<tr><td colspan="3" class="no">+ ${lab.targets.length - list.length} more</td></tr>` : ""}</tbody></table>`;
+    }).join("")}${L.targets.length > list.length ? `<tr><td colspan="3" class="no">+ ${L.targets.length - list.length} more</td></tr>` : ""}</tbody></table>`;
+}
+
+function renderLegs(st, done) {
+  $("labTargetsTitle").textContent = "Route legs";
+  $("labTargets").innerHTML = `<table class="res"><thead><tr><th>Leg</th><th>Straight line</th><th>By road</th></tr></thead><tbody>${
+    lab.legs.map((L, k) => {
+      const t = L.targets[0], r = L.results[t];
+      let road = "—", cls = "";
+      if (k < st.leg || (k === st.leg && done)) { road = r ? km(r.km) : "unreachable"; cls = "final"; }
+      else if (k === st.leg) { road = st.dist[t] !== undefined ? km(st.dist[t]) : "∞"; cls = st.dist[t] !== undefined ? "tent" : ""; }
+      return `<tr class="${k === st.leg ? "chosen" : ""}"><td>${k + 1}. ${esc(L.source)} → ${esc(t)}</td>
+        <td>${r ? km(r.straight_km) : "—"}</td><td class="${cls}">${road}</td></tr>`;
+    }).join("")}</tbody></table>`;
 }
 
 function openLab(source, to) {
+  labLeg = "custom";
   fillLabSelects();
   $("labFrom").value = source;
   $("labTo").value = to;
@@ -1228,7 +1320,7 @@ let speed = 1, playing = false, raf = null, lastT = 0;
 let lastRow, lastDec;
 
 const count = () => (mode === "sim" ? frames.length : lab ? lab.steps.length : 0);
-const durOf = i => (mode === "sim" ? frames[i].dur : LAB_STEP_MS);
+const durOf = i => (mode === "sim" ? frames[i].dur : lab.steps[i].t === "done" ? 2800 : LAB_STEP_MS);
 const P = () => pos[mode];
 
 function setMode(m, refresh = true) {
@@ -1237,6 +1329,7 @@ function setMode(m, refresh = true) {
   document.querySelectorAll("[data-mode]").forEach(b => b.classList.toggle("on", b.dataset.mode === m));
   $("map").classList.toggle("lab", m === "lab");
   $("labQuery").hidden = m !== "lab";
+  $("labNote").hidden = m !== "lab";
   $("labPanel").hidden = m !== "lab";
   $("labLegend").hidden = m !== "lab";
   $("simLegend").hidden = m === "lab";
@@ -1554,8 +1647,14 @@ document.querySelectorAll("[data-speed]").forEach(b => b.addEventListener("click
   document.querySelectorAll("[data-speed]").forEach(x => x.classList.toggle("on", x === b));
 }));
 document.querySelectorAll("[data-mode]").forEach(b => b.addEventListener("click", () => setMode(b.dataset.mode)));
-$("labFrom").addEventListener("change", () => runLab());
-$("labTo").addEventListener("change", () => runLab());
+$("labFrom").addEventListener("change", () => { labLeg = "custom"; $("labLeg").value = "custom"; runLab(); });
+$("labTo").addEventListener("change", () => { labLeg = "custom"; $("labLeg").value = "custom"; runLab(); });
+$("labLeg").addEventListener("change", () => {
+  const v = $("labLeg").value;
+  labLeg = v === "custom" || v === "all" ? v : +v;
+  fillLegSelect();
+  runLab();
+});
 document.querySelectorAll("[data-tool]").forEach(b => b.addEventListener("click", () => setTool(b.dataset.tool)));
 $("map").addEventListener("click", onMapClick);
 $("resetMap").addEventListener("click", () => {

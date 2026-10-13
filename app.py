@@ -684,17 +684,30 @@ def api_optimize():
 
 @app.route("/api/dijkstra", methods=["POST"])
 def api_dijkstra():
-    """Step-by-step Dijkstra trace for the lab view."""
+    """
+    Step-by-step Dijkstra traces for the lab view. Send either one query
+    ({source, targets}) or several ({queries: [{source, targets}, ...]}, e.g.
+    one per leg of the delivery route); several come back as {legs: [...]}.
+    """
     try:
         payload = request.get_json(silent=True) or {}
         city = build_city(payload.get("custom_nodes") or [], payload.get("closed_roads") or [])
-        source = payload.get("source")
-        targets = [t for t in dict.fromkeys(payload.get("targets") or []) if t in city.nodes]
-        if source not in city.nodes:
-            raise ValueError("Pick a starting place.")
-        return jsonify(city.dijkstra_trace(source, targets))
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+
+        def trace(query):
+            source = query.get("source")
+            targets = [t for t in dict.fromkeys(query.get("targets") or []) if t in city.nodes]
+            if source not in city.nodes:
+                raise ValueError("Pick a starting place.")
+            return city.dijkstra_trace(source, targets)
+
+        if "queries" in payload:
+            queries = payload["queries"]
+            if not isinstance(queries, list) or not 1 <= len(queries) <= 40:
+                raise ValueError("Send between 1 and 40 queries.")
+            return jsonify({"legs": [trace(q) for q in queries]})
+        return jsonify(trace(payload))
+    except (ValueError, AttributeError) as exc:
+        return jsonify({"error": str(exc) or "Bad request."}), 400
 
 
 @app.route("/api/health")

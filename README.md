@@ -69,8 +69,12 @@ expands about 20 states, while brute force has to check about 69,000 complete ro
   add up to 8 places and select up to 10 stops.
 - **Map**: the planned route, numbered delivery stops, and the chargers it will use. The EV
   follows the real road segments. If it drives past a charger without stopping, that is shown too.
-- **Dijkstra lab**: switch the map to *Dijkstra lab* and pick a start and target (one place, every
-  charger, or every place). It replays the real Python Dijkstra run one step at a time:
+- **Dijkstra lab**: switch the map to *Dijkstra lab*. By default it plays your **whole route**:
+  Dijkstra runs once per leg (Depot → first stop, first stop → second stop, … → Hub), and each
+  finished leg is drawn in orange, so at the end the whole delivery route is highlighted and the
+  legs add up to the route's distance. You can also pick a single **route leg**, or any two places
+  (a target can also be every charger, or every place). Dijkstra stops as soon as its target is
+  final, and the lab says so. It replays the real Python Dijkstra run one step at a time:
   - Places are gray until reached, gold while their distance may still improve, and green once
     their distance is final. The place being expanded has an orange ring.
   - The road being tried is highlighted with its length, and the shortest-path tree grows in gold.

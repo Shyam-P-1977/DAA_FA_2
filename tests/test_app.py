@@ -269,6 +269,19 @@ class DijkstraTraceTests(unittest.TestCase):
         self.assertEqual(r.json["results"]["Hub"]["path"][-1], "Hub")
         self.assertEqual(client.post("/api/dijkstra", json={"source": "Nowhere"}).status_code, 400)
 
+    def test_9d_whole_route_legs_add_up(self):
+        # one trace per leg of the planned route; together they give the route's distance
+        client = app.test_client()
+        plan = client.post("/api/optimize", json={"stops": ["Office", "Hospital", "Bakery"]}).json
+        legs = [e for e in plan["events"] if e["type"] == "travel"]
+        r = client.post("/api/dijkstra", json={
+            "queries": [{"source": e["from"], "targets": [e["to"]]} for e in legs]}).json
+        self.assertEqual(len(r["legs"]), len(legs))
+        total = sum(t["results"][e["to"]]["km"] for t, e in zip(r["legs"], legs))
+        self.assertAlmostEqual(total, plan["metrics"]["distance_km"], delta=0.05)
+        for t, e in zip(r["legs"], legs):
+            self.assertEqual(t["results"][e["to"]]["path"], e["path"])
+
 
 class RoadClosureTests(unittest.TestCase):
     def setUp(self):
